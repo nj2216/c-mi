@@ -57,8 +57,13 @@ jobs:
 
       - name: Verify static binary
         run: |
-          file ./c-mi | grep -F 'statically linked'
-          ldd ./c-mi 2>&1 | grep -F 'not a dynamic executable' >/dev/null
+          # GL/X11/libc stay dynamic (GL must dlopen the vendor driver at
+          # runtime), so only assert Qt and FFmpeg aren't runtime deps.
+          file ./c-mi | grep -F 'ELF'
+          if ldd ./c-mi 2>&1 | grep -Ei 'qt6|libav|libsw'; then
+            echo "static binary still depends on Qt/FFmpeg shared libraries" >&2
+            exit 1
+          fi
 
       - name: Upload static binary
         uses: actions/upload-artifact@v4
