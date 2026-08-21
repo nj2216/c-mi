@@ -144,9 +144,6 @@ void PreviewWidget::paintGL()
     m_texture->release();
     glBindVertexArray(0);
     m_program->release();
-
-    if (m_emitCopy)
-        emit frameRendered(m_lastFrame);
 }
 
 void PreviewWidget::clearFrame()

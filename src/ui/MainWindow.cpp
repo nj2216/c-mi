@@ -311,7 +311,6 @@ void MainWindow::openDevice(const QString &node)
     }
 
     m_grabTimer->start();
-    m_preview->setEmitFrameCopy(true);
 
     // Unique key for presets: use the device node path (stable enough).
     m_currentDeviceKey = QString(node).replace(QLatin1Char('/'), QLatin1Char('_'));
@@ -332,7 +331,6 @@ void MainWindow::closeDevice()
         onRecordToggled();
 
     m_grabTimer->stop();
-    m_preview->setEmitFrameCopy(false);
     m_preview->clearFrame();
 
     if (m_capture->isOpen()) {

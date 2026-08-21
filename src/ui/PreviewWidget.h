@@ -33,10 +33,6 @@ public slots:
     void presentFrame(const uchar *data, int bytes, QSize size, uint32_t pixFmt);
     void clearFrame();
 
-signals:
-    // Emits a copy of the latest staged RGBA frame (for photo capture/record).
-    void frameRendered(const QImage &frame);
-
 protected:
     void initializeGL() override;
     void resizeGL(int w, int h) override;
@@ -56,7 +52,6 @@ private:
     QImage m_lastFrame;   // latest uploaded frame (photo/record source)
     QSize m_frameSize;
     bool m_hasFrame = false;
-    bool m_emitCopy = false; // true while a consumer wants frameRendered
 
     ::AVCodecContext *m_mjpegCtx = nullptr;
     ::AVFrame *m_mjpegFrame = nullptr;
@@ -64,7 +59,6 @@ private:
     ::SwsContext *m_mjpegSws = nullptr;
 
 public:
-    void setEmitFrameCopy(bool on) { m_emitCopy = on; }
     QImage lastFrame() const;
 };
 

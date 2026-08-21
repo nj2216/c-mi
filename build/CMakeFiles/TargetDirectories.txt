@@ -1,9 +1,0 @@
-/home/runner/work/c-mi/c-mi/build/CMakeFiles/c-mi.dir
-/home/runner/work/c-mi/c-mi/build/CMakeFiles/edit_cache.dir
-/home/runner/work/c-mi/c-mi/build/CMakeFiles/rebuild_cache.dir
-/home/runner/work/c-mi/c-mi/build/CMakeFiles/list_install_components.dir
-/home/runner/work/c-mi/c-mi/build/CMakeFiles/install.dir
-/home/runner/work/c-mi/c-mi/build/CMakeFiles/install/local.dir
-/home/runner/work/c-mi/c-mi/build/CMakeFiles/install/strip.dir
-/home/runner/work/c-mi/c-mi/build/CMakeFiles/c-mi_autogen_timestamp_deps.dir
-/home/runner/work/c-mi/c-mi/build/CMakeFiles/c-mi_autogen.dir
