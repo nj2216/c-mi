@@ -10,7 +10,7 @@ libcamera, no GNOME portals.
 - C++17, Qt6 Widgets (no QML)
 - Raw V4L2 (`ioctl` + `mmap` buffer ring) for capture
 - libavcodec / libavformat / libswscale / libswresample / libavdevice for encode+mux
-- libudev for hotplug detection
+- Kernel netlink uevents for hotplug detection
 - QSettings (INI backend) for per-device control presets
 - CMake + pkg-config
 
@@ -21,7 +21,6 @@ Dependencies (Debian/Ubuntu/Xubuntu):
 ```sh
 sudo apt install build-essential cmake pkg-config \
     qt6-base-dev libgl1-mesa-dev \
-    libv4l-dev libudev-dev \
     libavcodec-dev libavformat-dev libavutil-dev \
     libswscale-dev libswresample-dev libavdevice-dev
 ```
@@ -33,6 +32,36 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ./build/c-mi
 ```
+
+### Fully static build
+
+To produce a binary without runtime Qt or FFmpeg dependencies, use a toolchain
+containing static archives for those libraries. Qt must be built with `-static`; the normal Ubuntu `qt6-base-dev`
+package is shared-only and will be rejected by this mode.
+
+```sh
+cmake -B build-static -DCMAKE_BUILD_TYPE=Release -DCMI_STATIC=ON
+cmake --build build-static -j
+```
+
+The static toolchain must also provide static OpenGL/X11 dependencies. Kernel
+V4L2 device access and the camera/audio backends still depend on the host
+kernel and hardware; static linking does not bundle those services or device
+nodes.
+
+For a reproducible static build, use the included Docker toolchain. Docker
+builds Qt6 and FFmpeg from source, then places the resulting binary in an
+image named `c-mi-static`:
+
+```sh
+docker build -f toolchain/Dockerfile -t c-mi-static .
+container=$(docker create c-mi-static)
+docker cp "$container:/c-mi" ./c-mi
+docker rm "$container"
+```
+
+The resulting `c-mi` executable is statically linked and can be copied to a
+matching Linux system without installing the application libraries.
 
 Install (binary, `.desktop` entry, and XDG hicolor icon):
 
@@ -47,7 +76,7 @@ follows XDG icon theme lookup.
 ## Features
 
 - Enumerates all `/dev/video*` capture nodes at startup and hot-reloads on
-  udev add/remove events.
+  kernel video uevents.
 - Queries formats via `VIDIOC_ENUM_FMT`; prefers MJPEG > YUYV > H264.
 - Live preview: V4L2 `mmap` buffer ring (`REQBUFS → QUERYBUF → mmap →
   QBUF/DQBUF`), MJPEG decoded via libavcodec, YUYV converted to RGBA, uploaded

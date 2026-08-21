@@ -9,6 +9,8 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
+option(CMI_STATIC "Build a fully static executable" OFF)
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -16,11 +18,28 @@ endif()
 # --- Qt6 (Widgets + OpenGLWidgets) ---
 find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Gui Core)
 
-# --- pkg-config deps: V4L2, FFmpeg, libudev ---
+if(CMI_STATIC)
+    foreach(QT_TARGET Qt6::Widgets Qt6::OpenGLWidgets Qt6::Gui Qt6::Core)
+        get_target_property(QT_LOCATION ${QT_TARGET} IMPORTED_LOCATION_RELEASE)
+        if(NOT QT_LOCATION)
+            get_target_property(QT_LOCATION ${QT_TARGET} IMPORTED_LOCATION)
+        endif()
+        if(NOT QT_LOCATION OR NOT QT_LOCATION MATCHES "\\.a$")
+            message(FATAL_ERROR
+                "CMI_STATIC requires a static Qt6 installation; ${QT_TARGET} "
+                "resolved to '${QT_LOCATION}'")
+        endif()
+    endforeach()
+
+    set(PKG_CONFIG_USE_STATIC_LIBS TRUE)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+    set(CMAKE_LINK_SEARCH_START_STATIC TRUE)
+    set(CMAKE_LINK_SEARCH_END_STATIC TRUE)
+endif()
+
+# --- pkg-config deps: FFmpeg ---
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(V4L2 REQUIRED libv4l2)
 pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libswresample libavdevice)
-pkg_check_modules(LIBUDEV REQUIRED libudev)
 
 add_executable(c-mi
     src/main.cpp
@@ -46,22 +65,16 @@ add_executable(c-mi
 
 target_include_directories(c-mi PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${V4L2_INCLUDE_DIRS}
     ${FFMPEG_INCLUDE_DIRS}
-    ${LIBUDEV_INCLUDE_DIRS}
 )
 
 target_link_directories(c-mi PRIVATE
-    ${V4L2_LIBRARY_DIRS}
     ${FFMPEG_LIBRARY_DIRS}
-    ${LIBUDEV_LIBRARY_DIRS}
 )
 
 target_compile_options(c-mi PRIVATE
     -Wall -Wextra
-    ${V4L2_CFLAGS_OTHER}
     ${FFMPEG_CFLAGS_OTHER}
-    ${LIBUDEV_CFLAGS_OTHER}
 )
 
 target_link_libraries(c-mi PRIVATE
@@ -69,12 +82,23 @@ target_link_libraries(c-mi PRIVATE
     Qt6::OpenGLWidgets
     Qt6::Gui
     Qt6::Core
-    ${V4L2_LIBRARIES}
     ${FFMPEG_LIBRARIES}
-    ${LIBUDEV_LIBRARIES}
     GL
     pthread
 )
+
+if(CMI_STATIC)
+    target_link_options(c-mi PRIVATE
+        -static
+        -static-libgcc
+        -static-libstdc++
+    )
+    if(COMMAND qt_import_plugins)
+        qt_import_plugins(c-mi INCLUDE Qt6::QXcbIntegrationPlugin)
+    else()
+        message(FATAL_ERROR "CMI_STATIC requires Qt's qt_import_plugins command")
+    endif()
+endif()
 
 # --- Install / XDG integration ---
 include(GNUInstallDirs)

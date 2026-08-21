@@ -6,8 +6,6 @@
 #include <QString>
 #include <QVector>
 
-#include <libudev.h>
-
 namespace cmi {
 
 struct DeviceInfo {
@@ -37,8 +35,7 @@ private slots:
 private:
     static bool probeCaptureCaps(const QString &node, DeviceInfo &out);
 
-    struct udev       *m_udev = nullptr;
-    struct udev_monitor *m_mon = nullptr;
+    int                m_ueventFd = -1;
     QSocketNotifier   *m_notifier = nullptr;
     QVector<DeviceInfo> m_devices;
 };

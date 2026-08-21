@@ -5,6 +5,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <linux/netlink.h>
 #include <linux/videodev2.h>
 #include <cstring>
 
@@ -15,20 +17,22 @@ DeviceManager::DeviceManager(QObject *parent)
 {
     refresh();
 
-    m_udev = udev_new();
-    if (!m_udev)
+    m_ueventFd = ::socket(AF_NETLINK, SOCK_DGRAM, NETLINK_KOBJECT_UEVENT);
+    if (m_ueventFd < 0)
         return;
 
-    m_mon = udev_monitor_new_from_netlink(m_udev, "udev");
-    if (!m_mon)
+    sockaddr_nl address{};
+    address.nl_family = AF_NETLINK;
+    address.nl_pid = static_cast<unsigned int>(::getpid());
+    address.nl_groups = 1;
+    if (::bind(m_ueventFd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) < 0) {
+        ::close(m_ueventFd);
+        m_ueventFd = -1;
         return;
+    }
 
-    udev_monitor_filter_add_match_subsystem_devtype(m_mon, "video4linux", nullptr);
-    udev_monitor_enable_receiving(m_mon);
-
-    int fd = udev_monitor_get_fd(m_mon);
-    if (fd >= 0) {
-        m_notifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
+    m_notifier = new QSocketNotifier(m_ueventFd, QSocketNotifier::Read, this);
+    if (m_notifier) {
         connect(m_notifier, &QSocketNotifier::activated,
                 this, &DeviceManager::onUdevEvent);
     }
@@ -36,10 +40,8 @@ DeviceManager::DeviceManager(QObject *parent)
 
 DeviceManager::~DeviceManager()
 {
-    if (m_mon)
-        udev_monitor_unref(m_mon);
-    if (m_udev)
-        udev_unref(m_udev);
+    if (m_ueventFd >= 0)
+        ::close(m_ueventFd);
 }
 
 void DeviceManager::refresh()
@@ -104,11 +106,17 @@ bool DeviceManager::probeCaptureCaps(const QString &node, DeviceInfo &out)
 
 void DeviceManager::onUdevEvent()
 {
-    // Drain the monitor queue; any add/remove on video4linux triggers a rescan.
-    while (struct udev_device *dev = udev_monitor_receive_device(m_mon)) {
-        udev_device_unref(dev);
+    char buffer[4096];
+    while (true) {
+        const ssize_t length = ::recv(m_ueventFd, buffer, sizeof(buffer), MSG_DONTWAIT);
+        if (length <= 0)
+            break;
+
+        const QByteArray event(buffer, static_cast<int>(length));
+        if (event.contains("\0SUBSYSTEM=video4linux\0") ||
+            event.startsWith("video4linux@") || event.contains("\0video4linux\0"))
+            refresh();
     }
-    refresh();
 }
 
 } // namespace cmi
