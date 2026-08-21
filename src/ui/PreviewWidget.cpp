@@ -130,7 +130,7 @@ void PreviewWidget::paintGL()
     } else {
         delete m_texture;
         QImage tex = m_lastFrame.convertToFormat(QImage::Format_RGBA8888);
-        m_texture = new QOpenGLTexture(tex.mirrored(),
+        m_texture = new QOpenGLTexture(tex,
                                        QOpenGLTexture::DontGenerateMipMaps);
         m_texture->setMinificationFilter(QOpenGLTexture::Linear);
         m_texture->setMagnificationFilter(QOpenGLTexture::Linear);

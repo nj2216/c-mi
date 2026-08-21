@@ -166,7 +166,6 @@ void MainWindow::applyStyle()
     // warm off-white on near-black, orange-brown accent for active states.
     const QString css = QStringLiteral(R"(
 * {
-    font-family: "JetBrains Mono", "DejaVu Sans Mono", monospace;
     font-size: 12px;
 }
 QMainWindow, QWidget {
@@ -246,7 +245,8 @@ QToolTip {
     color: #e8e0d0;
     border: 1px solid #3a3a3a;
 }
-)");
+    )").replace(QStringLiteral("* {"),
+                QStringLiteral("* {\n    font-family: \"%1\";").arg(qApp->font().family()));
     qApp->setStyleSheet(css);
 }
 

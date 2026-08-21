@@ -8,6 +8,7 @@ PREFIX="${PREFIX:-$HOME/.local}"
 
 if [[ "${1:-}" == "--uninstall" ]]; then
     rm -f "$PREFIX/bin/c-mi"
+    rm -rf "$PREFIX/lib/c-mi"
     rm -f "$PREFIX/share/applications/c-mi.desktop"
     rm -f "$PREFIX/share/icons/hicolor/scalable/apps/c-mi.svg"
     echo "Removed c-mi from $PREFIX"
@@ -15,6 +16,10 @@ if [[ "${1:-}" == "--uninstall" ]]; then
 fi
 
 install -Dm755 "$SRC_DIR/bin/c-mi" "$PREFIX/bin/c-mi"
+if [[ -d "$SRC_DIR/lib/c-mi" ]]; then
+    mkdir -p "$PREFIX/lib/c-mi"
+    cp -f "$SRC_DIR"/lib/c-mi/* "$PREFIX/lib/c-mi/"
+fi
 install -Dm644 "$SRC_DIR/share/applications/c-mi.desktop" "$PREFIX/share/applications/c-mi.desktop"
 install -Dm644 "$SRC_DIR/share/icons/hicolor/scalable/apps/c-mi.svg" "$PREFIX/share/icons/hicolor/scalable/apps/c-mi.svg"
 
