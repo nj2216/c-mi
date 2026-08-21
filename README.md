@@ -33,7 +33,7 @@ cmake --build build -j
 ./build/c-mi
 ```
 
-### Fully static build
+### Static build
 
 To produce a binary without runtime Qt or FFmpeg dependencies, use a toolchain
 containing static archives for those libraries. Qt must be built with `-static`; the normal Ubuntu `qt6-base-dev`
@@ -44,10 +44,11 @@ cmake -B build-static -DCMAKE_BUILD_TYPE=Release -DCMI_STATIC=ON
 cmake --build build-static -j
 ```
 
-The static toolchain must also provide static OpenGL/X11 dependencies. Kernel
-V4L2 device access and the camera/audio backends still depend on the host
-kernel and hardware; static linking does not bundle those services or device
-nodes.
+OpenGL, X11, and libc are still linked dynamically: GL has to `dlopen` the
+vendor driver at runtime, so it can never be a static archive, and both are
+already present on any working Linux desktop. Kernel V4L2 device access and
+the camera/audio backends still depend on the host kernel and hardware;
+static linking does not bundle those services or device nodes.
 
 For a reproducible static build, use the included Docker toolchain. Docker
 builds Qt6 and FFmpeg from source, then places the resulting binary in an

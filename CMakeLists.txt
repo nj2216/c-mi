@@ -9,7 +9,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-option(CMI_STATIC "Build a fully static executable" OFF)
+option(CMI_STATIC "Statically link Qt and FFmpeg (GL/X11/libc stay dynamic)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -32,9 +32,10 @@ if(CMI_STATIC)
     endforeach()
 
     set(PKG_CONFIG_USE_STATIC_LIBS TRUE)
-    set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
-    set(CMAKE_LINK_SEARCH_START_STATIC TRUE)
-    set(CMAKE_LINK_SEARCH_END_STATIC TRUE)
+    # Prefer static archives, but fall back to shared libraries for things
+    # like GL/X11 that never ship a static archive (GL must dlopen the
+    # vendor driver at runtime, so it can't be linked statically anyway).
+    set(CMAKE_FIND_LIBRARY_SUFFIXES .a .so)
 endif()
 
 # --- pkg-config deps: FFmpeg ---
@@ -89,7 +90,6 @@ target_link_libraries(c-mi PRIVATE
 
 if(CMI_STATIC)
     target_link_options(c-mi PRIVATE
-        -static
         -static-libgcc
         -static-libstdc++
     )
