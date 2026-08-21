@@ -25,8 +25,27 @@ const char *kFragSrc = R"(#version 330 core
 in vec2 vTex;
 out vec4 fragColor;
 uniform sampler2D frameTex;
+uniform vec2 uImageSize;
+uniform vec2 uViewSize;
 void main() {
-    fragColor = texture(frameTex, vTex);
+    vec2 uv = vTex;
+    float imageAspect = uImageSize.x / max(uImageSize.y, 1.0);
+    float viewAspect = uViewSize.x / max(uViewSize.y, 1.0);
+
+    vec2 centered = uv - vec2(0.5);
+    if (imageAspect > viewAspect) {
+        float scale = viewAspect / imageAspect;
+        centered.x *= 1.0 / scale;
+    } else {
+        float scale = imageAspect / viewAspect;
+        centered.y *= 1.0 / scale;
+    }
+
+    vec2 sampleUv = centered + vec2(0.5);
+    if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) {
+        discard;
+    }
+    fragColor = texture(frameTex, sampleUv);
 })";
 
 // Fullscreen quad: position.xy, texcoord.xy
@@ -140,6 +159,8 @@ void PreviewWidget::paintGL()
     glBindVertexArray(m_vao);
     m_texture->bind(0);
     m_program->setUniformValue("frameTex", 0);
+    m_program->setUniformValue("uImageSize", QVector2D(static_cast<float>(m_lastFrame.width()), static_cast<float>(m_lastFrame.height())));
+    m_program->setUniformValue("uViewSize", QVector2D(static_cast<float>(width()), static_cast<float>(height())));
     glDrawArrays(GL_TRIANGLES, 0, 6);
     m_texture->release();
     glBindVertexArray(0);

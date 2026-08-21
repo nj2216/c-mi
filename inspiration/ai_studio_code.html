@@ -1,0 +1,1308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Camera Pro</title>
+<style>
+  :root {
+    --bg:        #f5f5f7;
+    --surface:   rgba(255,255,255,0.85);
+    --surface-2: rgba(255,255,255,0.94);
+    --border:    rgba(0,0,0,0.08);
+    --text:      #1d1d1f;
+    --text-dim:  #86868b;
+    --blue:      #0071e3;
+    --red:       #ff3b30;
+    --green:     #34c759;
+    --shadow:    0 16px 40px rgba(0,0,0,0.14);
+  }
+
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-font-smoothing:antialiased; }
+
+  html, body {
+    height: 100%;
+    background:
+      radial-gradient(circle at 20% 0%, #ffffff 0%, transparent 50%),
+      radial-gradient(circle at 80% 100%, #e2e5eb 0%, transparent 50%),
+      linear-gradient(180deg, #eef0f3 0%, #d8dbe0 100%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    overflow: hidden;
+  }
+
+  body { display: flex; align-items: center; justify-content: center; }
+
+  /* ---------- window chrome ---------- */
+  .window {
+    width: min(96vw, 1160px);
+    height: min(94vh, 800px);
+    background: var(--surface-2);
+    border-radius: 20px;
+    box-shadow: var(--shadow), 0 0 0 1px var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .titlebar {
+    height: 42px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    background: rgba(255,255,255,0.65);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    z-index: 20;
+  }
+  .window-controls { display: flex; gap: 8px; align-items: center; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; border: 1px solid rgba(0,0,0,0.1); }
+  .dot.y { background: #febc2e; border: 1px solid rgba(0,0,0,0.1); }
+  .dot.g { background: #28c840; border: 1px solid rgba(0,0,0,0.1); }
+  
+  .titlebar .title {
+    font-size: 13px; font-weight: 600; color: var(--text);
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  .titlebar-actions { display: flex; align-items: center; gap: 8px; }
+  .header-btn {
+    background: transparent;
+    border: none;
+    font-size: 14px;
+    color: var(--text);
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s;
+  }
+  .header-btn:hover { background: rgba(0,0,0,0.06); }
+  .header-btn.active { background: rgba(0,0,0,0.12); color: var(--blue); }
+
+  /* ---------- body layout ---------- */
+  .body {
+    flex: 1 1 auto;
+    display: flex;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* ---------- viewfinder stage ---------- */
+  .stage {
+    flex: 1 1 auto;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: #0d0d0f;
+    padding: 14px 16px 0;
+    min-width: 0;
+  }
+
+  .frame-container {
+    flex: 1 1 auto;
+    position: relative;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+  }
+
+  .frame {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #000;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: width .25s ease, height .25s ease;
+  }
+
+  .frame.ar-16-9 { aspect-ratio: 16/9; width: 100%; height: auto; max-height: 100%; }
+  .frame.ar-4-3  { aspect-ratio: 4/3; width: auto; height: 100%; max-width: 100%; }
+  .frame.ar-1-1  { aspect-ratio: 1/1; width: auto; height: 100%; max-width: 100%; }
+  .frame.ar-full { width: 100%; height: 100%; }
+
+  video {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+    transition: filter .2s ease;
+  }
+  video.grid-mirror-off { transform: none; }
+
+  /* Filters */
+  video.fx-none       { filter: none; }
+  video.fx-grayscale  { filter: grayscale(1) contrast(1.08); }
+  video.fx-sepia      { filter: sepia(0.65) saturate(1.2) contrast(1.05); }
+  video.fx-cool       { filter: saturate(1.15) hue-rotate(-12deg) brightness(1.02); }
+  video.fx-warm       { filter: saturate(1.2) hue-rotate(10deg) brightness(1.04); }
+  video.fx-cyber      { filter: contrast(1.3) saturate(1.8) hue-rotate(145deg); }
+  video.fx-noir       { filter: grayscale(1) contrast(1.7) brightness(0.9); }
+  video.fx-vintage    { filter: sepia(0.35) contrast(1.15) saturate(1.3) brightness(0.95); }
+  video.fx-invert     { filter: invert(1) hue-rotate(180deg); }
+
+  .grid-overlay {
+    position: absolute; inset: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .2s;
+  }
+  .grid-overlay.on { opacity: 0.45; }
+  .grid-overlay div { border: 0.5px solid rgba(255,255,255,0.7); }
+
+  .top-pill {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #fff;
+    font-size: 12px; font-weight: 500;
+    padding: 5px 14px;
+    border-radius: 100px;
+    display: flex; align-items: center; gap: 8px;
+    letter-spacing: .01em;
+    z-index: 5;
+  }
+  .rec-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--red);
+    display: none;
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0.2; } }
+
+  .timer-count {
+    position: absolute; inset: 0;
+    display: none;
+    align-items: center; justify-content: center;
+    font-size: 120px; font-weight: 700; color: #fff;
+    text-shadow: 0 4px 30px rgba(0,0,0,.6);
+    z-index: 6; pointer-events: none;
+  }
+  .timer-count.show { display: flex; animation: zoomIn .8s ease-out; }
+  @keyframes zoomIn { from { transform: scale(1.3); opacity: 0.7; } to { transform: scale(1); opacity: 1; } }
+
+  .flash-overlay {
+    position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 7;
+  }
+  .flash-overlay.fire { animation: flashpop .3s ease-out; }
+  @keyframes flashpop { 0% { opacity: 0.92; } 100% { opacity: 0; } }
+
+  .empty-state {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; color: #fff; text-align: center; padding: 20px;
+    background: linear-gradient(180deg, #242426, #141416);
+    z-index: 8;
+  }
+  .empty-state .glyph {
+    width: 54px; height: 54px; border-radius: 50%;
+    background: rgba(255,255,255,0.1);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+  }
+  .empty-state .msg { font-size: 13px; color: rgba(255,255,255,0.65); max-width: 280px; line-height: 1.5; }
+
+  /* ---------- apple-style horizontal bottom filmstrip tray ---------- */
+  .captures-tray {
+    flex: 0 0 auto;
+    width: 100%;
+    background: rgba(255,255,255,0.06);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    margin: 12px 0 6px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  .captures-meta {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-right: 10px;
+    border-right: 1px solid rgba(255,255,255,0.12);
+  }
+  .captures-meta .tray-title { font-size: 11px; font-weight: 700; color: #8e8e93; text-transform: uppercase; letter-spacing: .04em; }
+  .captures-meta .tray-count { font-size: 12px; font-weight: 600; color: #fff; }
+  .tray-save-btn {
+    background: none; border: none; font-size: 11px; font-weight: 600; color: var(--blue); cursor: pointer; text-align: left; padding: 0; margin-top: 2px;
+  }
+  .tray-save-btn:hover { text-decoration: underline; }
+
+  .filmstrip-scroll {
+    flex: 1 1 auto;
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    scroll-behavior: smooth;
+    padding: 2px 4px;
+    align-items: center;
+    min-height: 60px;
+  }
+  .filmstrip-scroll::-webkit-scrollbar { height: 4px; }
+  .filmstrip-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+
+  .shot {
+    flex: 0 0 56px;
+    height: 56px;
+    border-radius: 10px;
+    background-size: cover;
+    background-position: center;
+    cursor: pointer;
+    position: relative;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.35);
+    border: 1.5px solid rgba(255,255,255,0.2);
+    transition: transform .18s cubic-bezier(0.16, 1, 0.3, 1), border-color .15s;
+    background-color: #000;
+  }
+  .shot:hover { transform: scale(1.08) translateY(-2px); border-color: #fff; z-index: 2; }
+  .shot .badge-vid {
+    position: absolute; bottom: 3px; left: 3px;
+    font-size: 8px; font-weight: 700; background: rgba(0,0,0,0.75);
+    color: #fff; padding: 1px 4px; border-radius: 4px;
+  }
+  .shot .del {
+    position: absolute; top: -5px; right: -5px;
+    width: 17px; height: 17px; border-radius: 50%;
+    background: #fff; color: #111;
+    font-size: 9px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    opacity: 0; transition: opacity .12s;
+  }
+  .shot:hover .del { opacity: 1; }
+  .fs-empty { font-size: 11.5px; color: rgba(255,255,255,0.4); font-style: italic; white-space: nowrap; }
+
+  /* ---------- dock (bottom controls) ---------- */
+  .dock-wrap {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 20px 14px;
+    background: #0d0d0f;
+    z-index: 10;
+  }
+
+  .mode-selector {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.4);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    cursor: pointer;
+  }
+  .mode-selector span.active { color: #fff; text-shadow: 0 0 8px rgba(255,255,255,0.4); }
+
+  .dock {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    background: rgba(255,255,255,0.12);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 100px;
+    padding: 6px 18px;
+  }
+
+  .dock-icon-btn {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    font-size: 15px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .dock-icon-btn:hover { background: rgba(255,255,255,0.25); transform: scale(1.06); }
+  .dock-icon-btn.active { background: #fff; color: #111; }
+
+  .shutter {
+    width: 58px; height: 58px;
+    border-radius: 50%;
+    background: #fff;
+    border: 3px solid rgba(255,255,255,0.35);
+    cursor: pointer;
+    position: relative;
+    transition: transform .12s;
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .shutter:hover { transform: scale(1.04); }
+  .shutter:active { transform: scale(.92); }
+  
+  .shutter-inner {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: inset 0 0 0 2px rgba(0,0,0,0.1);
+    transition: all .2s ease;
+  }
+
+  .mode-video .shutter-inner { background: var(--red); }
+  .recording .shutter-inner {
+    width: 22px; height: 22px;
+    border-radius: 5px;
+    background: var(--red);
+  }
+
+  /* ---------- slide-out settings sidebar (drawer) ---------- */
+  .sidebar-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.35);
+    backdrop-filter: blur(2px);
+    z-index: 30;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s ease;
+  }
+  .sidebar-backdrop.active { opacity: 1; pointer-events: auto; }
+
+  .sidebar {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    width: 290px;
+    background: var(--surface);
+    backdrop-filter: blur(28px);
+    -webkit-backdrop-filter: blur(28px);
+    border-left: 1px solid var(--border);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+    z-index: 35;
+    transform: translateX(100%);
+    transition: transform .3s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: -10px 0 30px rgba(0,0,0,0.15);
+  }
+  .sidebar.open { transform: translateX(0); }
+
+  .sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-header h3 { font-size: 14px; font-weight: 700; color: var(--text); }
+  .close-sidebar-btn {
+    background: rgba(0,0,0,0.06);
+    border: none;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .close-sidebar-btn:hover { background: rgba(0,0,0,0.12); color: var(--text); }
+
+  .field-label {
+    font-size: 11px; font-weight: 700; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: .05em;
+    margin-bottom: 6px;
+  }
+
+  .segmented {
+    display: flex;
+    background: rgba(0,0,0,0.06);
+    border-radius: 9px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .segmented button {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    padding: 6px 2px;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .segmented button.active {
+    background: #fff;
+    color: var(--text);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.14);
+  }
+
+  .swatch-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .swatch {
+    height: 32px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9.5px; font-weight: 700; color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,.5);
+    transition: transform .12s, border-color .15s;
+  }
+  .swatch:hover { transform: scale(1.03); }
+  .swatch.active { border-color: var(--blue); box-shadow: 0 0 0 1px #fff; }
+  .sw-none     { background: linear-gradient(135deg,#c7c7cc,#8e8e93); }
+  .sw-grayscale{ background: linear-gradient(135deg,#6e6e73,#1d1d1f); }
+  .sw-sepia    { background: linear-gradient(135deg,#c9a06a,#8a5a2b); }
+  .sw-cool     { background: linear-gradient(135deg,#5ac8fa,#0071e3); }
+  .sw-warm     { background: linear-gradient(135deg,#ff9f0a,#ff375f); }
+  .sw-cyber    { background: linear-gradient(135deg,#ff007f,#00f0ff); }
+  .sw-noir     { background: linear-gradient(135deg,#000000,#434343); }
+  .sw-vintage  { background: linear-gradient(135deg,#d4a373,#a98467); }
+  .sw-invert   { background: linear-gradient(135deg,#11998e,#38ef7d); }
+
+  select {
+    width: 100%;
+    background: rgba(0,0,0,0.05);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 8px;
+    outline: none;
+  }
+
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12.5px; font-weight: 500; color: var(--text); padding: 2px 0;
+  }
+  .toggle {
+    width: 36px; height: 20px; border-radius: 100px;
+    background: rgba(0,0,0,0.15);
+    position: relative; cursor: pointer;
+    transition: background .2s ease;
+    flex: 0 0 auto;
+  }
+  .toggle::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    transition: transform .2s ease;
+  }
+  .toggle.on { background: var(--green); }
+  .toggle.on::after { transform: translateX(16px); }
+
+  .status-pill {
+    font-size: 11px; color: var(--text-dim);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .status-pill .led { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); }
+  .status-pill.ok .led { background: var(--green); }
+  .status-pill.err .led { background: var(--red); }
+
+  /* ---------- preview modal ---------- */
+  .modal {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.8);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    z-index: 50;
+    display: none;
+    align-items: center; justify-content: center;
+    flex-direction: column;
+    padding: 24px;
+  }
+  .modal.active { display: flex; animation: fadeIn .15s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  .modal-content {
+    max-width: 90%; max-height: 75%;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+    overflow: hidden;
+    background: #000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .modal-content img, .modal-content video {
+    max-width: 100%; max-height: 65vh; object-fit: contain;
+  }
+  .modal-bar { display: flex; gap: 12px; margin-top: 16px; }
+  .modal-btn {
+    background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #fff;
+    padding: 8px 18px;
+    border-radius: 100px;
+    font-size: 13px; font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+    text-decoration: none;
+  }
+  .modal-btn:hover { background: rgba(255,255,255,0.35); }
+  .modal-btn.danger { background: rgba(255,59,48,0.8); border-color: transparent; }
+  .modal-btn.danger:hover { background: rgba(255,59,48,1); }
+
+  .init-btn {
+    background: #fff; color: #1d1d1f; border: none; border-radius: 100px;
+    padding: 8px 20px; font-size: 13px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    transition: transform .15s, background .15s;
+  }
+  .init-btn:hover { background: #f2f2f4; transform: scale(1.02); }
+
+  button { font-family: inherit; }
+</style>
+</head>
+<body>
+
+  <div class="window">
+    <div class="titlebar">
+      <div class="window-controls">
+        <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      </div>
+      <div class="title"><span>📸</span> Camera Pro</div>
+      <div class="titlebar-actions">
+        <button class="header-btn" id="settingsToggleBtn" title="Camera Settings">⚙ Settings</button>
+      </div>
+    </div>
+
+    <div class="body">
+      <!-- Main Stage Viewport -->
+      <div class="stage">
+        <div class="frame-container">
+          <div class="frame ar-full" id="frame">
+            <video id="video" autoplay playsinline muted class="fx-none"></video>
+            <div class="grid-overlay" id="gridOverlay">
+              <div></div><div></div><div></div>
+              <div></div><div></div><div></div>
+              <div></div><div></div><div></div>
+            </div>
+
+            <div class="top-pill">
+              <span class="rec-dot" id="recDot"></span>
+              <span id="hudStatus">Standby</span>
+            </div>
+
+            <div class="timer-count" id="timerCount">3</div>
+            <div class="flash-overlay" id="flashOverlay"></div>
+
+            <div class="empty-state" id="emptyState">
+              <div class="glyph">◎</div>
+              <div class="msg">Enable camera permissions to preview and capture photos & video.</div>
+              <button class="init-btn" id="initBtn">Turn On Camera</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Horizontal Captures Tray (Apple Photo Booth / Camera Roll style) -->
+        <div class="captures-tray">
+          <div class="captures-meta">
+            <span class="tray-title">Roll</span>
+            <span class="tray-count" id="shotCounter">0 items</span>
+            <button class="tray-save-btn" id="downloadAllBtn">Save All</button>
+          </div>
+          <div class="filmstrip-scroll" id="filmstrip">
+            <span class="fs-empty" id="fsEmpty">Your captured photos and videos will appear here.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backdrop Overlay -->
+      <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+      <!-- Slide-Out Settings Sidebar -->
+      <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+          <h3>Camera Settings</h3>
+          <button class="close-sidebar-btn" id="closeSidebarBtn">✕</button>
+        </div>
+
+        <div>
+          <div class="field-label">Source Camera</div>
+          <select id="deviceSelect"><option>Default Camera</option></select>
+          <div class="status-pill" id="deviceStatus" style="margin-top:6px;"><span class="led"></span>Disconnected</div>
+        </div>
+
+        <div>
+          <div class="field-label">Aspect Ratio</div>
+          <div class="segmented" id="arRow">
+            <button class="active" data-ar="ar-full">Fit</button>
+            <button data-ar="ar-16-9">16:9</button>
+            <button data-ar="ar-4-3">4:3</button>
+            <button data-ar="ar-1-1">1:1</button>
+          </div>
+        </div>
+
+        <div>
+          <div class="field-label">Quality</div>
+          <div class="segmented" id="resRow">
+            <button class="active" data-res="640x480">480p</button>
+            <button data-res="1280x720">720p</button>
+            <button data-res="1920x1080">1080p</button>
+          </div>
+        </div>
+
+        <div>
+          <div class="field-label">Color Filters</div>
+          <div class="swatch-row" id="fxRow">
+            <div class="swatch sw-none active" data-fx="none">None</div>
+            <div class="swatch sw-grayscale" data-fx="grayscale">Mono</div>
+            <div class="swatch sw-sepia" data-fx="sepia">Sepia</div>
+            <div class="swatch sw-cool" data-fx="cool">Cool</div>
+            <div class="swatch sw-warm" data-fx="warm">Warm</div>
+            <div class="swatch sw-cyber" data-fx="cyber">Cyber</div>
+            <div class="swatch sw-noir" data-fx="noir">Noir</div>
+            <div class="swatch sw-vintage" data-fx="vintage">Vintage</div>
+            <div class="swatch sw-invert" data-fx="invert">Invert</div>
+          </div>
+        </div>
+
+        <div>
+          <div class="field-label">Timer & Burst</div>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <div class="segmented" id="timerRow">
+              <button class="active" data-timer="0">Off</button>
+              <button data-timer="3">3s</button>
+              <button data-timer="5">5s</button>
+              <button data-timer="10">10s</button>
+            </div>
+            <div class="segmented" id="burstRow">
+              <button class="active" data-burst="1">1x Shot</button>
+              <button data-burst="3">3x Burst</button>
+              <button data-burst="5">5x Burst</button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="field-label">Toggles</div>
+          <div class="row"><span>Grid Guide</span><div class="toggle" id="gridToggle"></div></div>
+          <div class="row"><span>Mirror Mode</span><div class="toggle on" id="mirrorToggle"></div></div>
+          <div class="row"><span>Flash Effect</span><div class="toggle on" id="flashToggle"></div></div>
+          <div class="row"><span>Shutter SFX</span><div class="toggle on" id="soundToggle"></div></div>
+          <div class="row"><span>Microphone</span><div class="toggle on" id="micToggle"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Dock -->
+    <div class="dock-wrap">
+      <div class="mode-selector" id="modeSelector">
+        <span class="active" data-mode="photo">Photo</span>
+        <span data-mode="video">Video</span>
+      </div>
+      <div class="dock" id="dockContainer">
+        <button class="dock-icon-btn" id="switchCamBtn" title="Switch camera">⟲</button>
+        <div class="shutter" id="shutterBtn">
+          <div class="shutter-inner"></div>
+        </div>
+        <button class="dock-icon-btn" id="dockSettingsBtn" title="Settings">⚙</button>
+      </div>
+    </div>
+
+    <!-- Full Preview Modal -->
+    <div class="modal" id="previewModal">
+      <div class="modal-content" id="modalMediaWrap"></div>
+      <div class="modal-bar">
+        <button class="modal-btn" id="modalDownloadBtn">Download</button>
+        <button class="modal-btn danger" id="modalDeleteBtn">Delete</button>
+        <button class="modal-btn" id="modalCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // DOM References
+  const video            = document.getElementById('video');
+  const frame            = document.getElementById('frame');
+  const emptyState       = document.getElementById('emptyState');
+  const initBtn          = document.getElementById('initBtn');
+  const deviceSelect     = document.getElementById('deviceSelect');
+  const deviceStatus     = document.getElementById('deviceStatus');
+  const resRow           = document.getElementById('resRow');
+  const arRow            = document.getElementById('arRow');
+  const fxRow            = document.getElementById('fxRow');
+  const timerRow         = document.getElementById('timerRow');
+  const burstRow         = document.getElementById('burstRow');
+  const gridOverlay      = document.getElementById('gridOverlay');
+  const gridToggle       = document.getElementById('gridToggle');
+  const mirrorToggle     = document.getElementById('mirrorToggle');
+  const flashToggle      = document.getElementById('flashToggle');
+  const soundToggle      = document.getElementById('soundToggle');
+  const micToggle        = document.getElementById('micToggle');
+  const shutterBtn       = document.getElementById('shutterBtn');
+  const switchCamBtn     = document.getElementById('switchCamBtn');
+  const timerCount       = document.getElementById('timerCount');
+  const flashOverlay     = document.getElementById('flashOverlay');
+  const recDot           = document.getElementById('recDot');
+  const hudStatus        = document.getElementById('hudStatus');
+  const filmstrip        = document.getElementById('filmstrip');
+  const fsEmpty          = document.getElementById('fsEmpty');
+  const shotCounter      = document.getElementById('shotCounter');
+  const modeSelector     = document.getElementById('modeSelector');
+  const dockContainer    = document.getElementById('dockContainer');
+  const previewModal     = document.getElementById('previewModal');
+  const modalMediaWrap   = document.getElementById('modalMediaWrap');
+  const modalDownloadBtn = document.getElementById('modalDownloadBtn');
+  const modalDeleteBtn   = document.getElementById('modalDeleteBtn');
+  const modalCloseBtn    = document.getElementById('modalCloseBtn');
+  const downloadAllBtn   = document.getElementById('downloadAllBtn');
+
+  // Sidebar Elements
+  const sidebar          = document.getElementById('sidebar');
+  const sidebarBackdrop  = document.getElementById('sidebarBackdrop');
+  const settingsToggleBtn= document.getElementById('settingsToggleBtn');
+  const dockSettingsBtn  = document.getElementById('dockSettingsBtn');
+  const closeSidebarBtn  = document.getElementById('closeSidebarBtn');
+
+  // App State
+  let currentStream = null;
+  let currentRes = '640x480';
+  let currentFx = 'none';
+  let currentTimer = 0;
+  let currentBurst = 1;
+  let currentMode = 'photo';
+  let isRecording = false;
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let recordStartTime = 0;
+  let recordTimerInterval = null;
+  let timerActive = false;
+
+  let mirrored = true;
+  let flashOn = true;
+  let soundOn = true;
+  let micOn = true;
+
+  let captures = [];
+  let activeModalItem = null;
+  let deviceIds = [];
+  let deviceIdx = 0;
+
+  // Sidebar Controls
+  function openSidebar() {
+    sidebar.classList.add('open');
+    sidebarBackdrop.classList.add('active');
+    settingsToggleBtn.classList.add('active');
+    dockSettingsBtn.classList.add('active');
+  }
+
+  function closeSidebar() {
+    sidebar.classList.remove('open');
+    sidebarBackdrop.classList.remove('active');
+    settingsToggleBtn.classList.remove('active');
+    dockSettingsBtn.classList.remove('active');
+  }
+
+  function toggleSidebar() {
+    if (sidebar.classList.contains('open')) closeSidebar();
+    else openSidebar();
+  }
+
+  settingsToggleBtn.addEventListener('click', toggleSidebar);
+  dockSettingsBtn.addEventListener('click', toggleSidebar);
+  closeSidebarBtn.addEventListener('click', closeSidebar);
+  sidebarBackdrop.addEventListener('click', closeSidebar);
+
+  // Audio Effects with Web Audio API
+  let audioCtx = null;
+  function getAudioContext() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  function playShutterSound() {
+    if (!soundOn) return;
+    try {
+      const ctx = getAudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(120, ctx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.01, ctx.currentTime + 0.08);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.09);
+    } catch(e) {}
+  }
+
+  function playBeepSound(isHigh = false) {
+    if (!soundOn) return;
+    try {
+      const ctx = getAudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(isHigh ? 880 : 540, ctx.currentTime);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.13);
+    } catch(e) {}
+  }
+
+  // Device Enumeration
+  async function listDevices() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      deviceIds = cams.map(c => c.deviceId);
+      deviceSelect.innerHTML = '';
+      if (cams.length === 0) {
+        deviceSelect.innerHTML = '<option>No camera detected</option>';
+        return;
+      }
+      cams.forEach((c, i) => {
+        const opt = document.createElement('option');
+        opt.value = c.deviceId;
+        opt.textContent = c.label || `Camera ${i + 1}`;
+        deviceSelect.appendChild(opt);
+      });
+    } catch (e) {}
+  }
+
+  // Camera Setup
+  async function startCamera(deviceId) {
+    const [w, h] = currentRes.split('x').map(Number);
+    const constraints = {
+      video: {
+        width: { ideal: w },
+        height: { ideal: h },
+        deviceId: deviceId ? { exact: deviceId } : undefined
+      },
+      audio: micOn
+    };
+
+    try {
+      hudStatus.textContent = 'Connecting…';
+      if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      currentStream = stream;
+      video.srcObject = stream;
+      emptyState.style.display = 'none';
+      deviceStatus.innerHTML = '<span class="led"></span>Connected';
+      deviceStatus.className = 'status-pill ok';
+      hudStatus.textContent = currentMode === 'video' ? 'Video Ready' : 'Ready';
+      await listDevices();
+      if (deviceId) {
+        const i = deviceIds.indexOf(deviceId);
+        if (i > -1) deviceIdx = i;
+      }
+    } catch (err) {
+      deviceStatus.innerHTML = '<span class="led"></span>' + (err.name === 'NotAllowedError' ? 'Permission Denied' : 'Camera Error');
+      deviceStatus.className = 'status-pill err';
+      hudStatus.textContent = 'No signal';
+      emptyState.style.display = 'flex';
+    }
+  }
+
+  initBtn.addEventListener('click', () => startCamera());
+  deviceSelect.addEventListener('change', () => startCamera(deviceSelect.value));
+
+  switchCamBtn.addEventListener('click', () => {
+    if (deviceIds.length < 2) return;
+    deviceIdx = (deviceIdx + 1) % deviceIds.length;
+    deviceSelect.value = deviceIds[deviceIdx];
+    startCamera(deviceIds[deviceIdx]);
+  });
+
+  // Aspect Ratio selection
+  arRow.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    [...arRow.children].forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    frame.className = `frame ${btn.dataset.ar}`;
+  });
+
+  // Resolution selection
+  resRow.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    [...resRow.children].forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    currentRes = btn.dataset.res;
+    if (currentStream) startCamera(deviceSelect.value);
+  });
+
+  function applyVideoClass() {
+    video.className = mirrored ? `fx-${currentFx}` : `fx-${currentFx} grid-mirror-off`;
+  }
+
+  // Filter Selection
+  fxRow.addEventListener('click', e => {
+    const sw = e.target.closest('.swatch');
+    if (!sw) return;
+    [...fxRow.children].forEach(c => c.classList.remove('active'));
+    sw.classList.add('active');
+    currentFx = sw.dataset.fx;
+    applyVideoClass();
+  });
+
+  // Timer Selection
+  timerRow.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    [...timerRow.children].forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    currentTimer = Number(btn.dataset.timer);
+  });
+
+  // Burst Selection
+  burstRow.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    [...burstRow.children].forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    currentBurst = Number(btn.dataset.burst);
+  });
+
+  // Toggles
+  gridToggle.addEventListener('click', () => {
+    gridToggle.classList.toggle('on');
+    gridOverlay.classList.toggle('on');
+  });
+
+  mirrorToggle.addEventListener('click', () => {
+    mirrorToggle.classList.toggle('on');
+    mirrored = mirrorToggle.classList.contains('on');
+    applyVideoClass();
+  });
+
+  flashToggle.addEventListener('click', () => {
+    flashToggle.classList.toggle('on');
+    flashOn = flashToggle.classList.contains('on');
+  });
+
+  soundToggle.addEventListener('click', () => {
+    soundToggle.classList.toggle('on');
+    soundOn = soundToggle.classList.contains('on');
+  });
+
+  micToggle.addEventListener('click', () => {
+    micToggle.classList.toggle('on');
+    micOn = micToggle.classList.contains('on');
+    if (currentStream) startCamera(deviceSelect.value);
+  });
+
+  // Mode Selection (Photo / Video)
+  modeSelector.addEventListener('click', e => {
+    const span = e.target.closest('span');
+    if (!span || isRecording) return;
+    [...modeSelector.children].forEach(s => s.classList.remove('active'));
+    span.classList.add('active');
+    currentMode = span.dataset.mode;
+    
+    if (currentMode === 'video') {
+      dockContainer.classList.add('mode-video');
+      hudStatus.textContent = 'Video Ready';
+    } else {
+      dockContainer.classList.remove('mode-video');
+      hudStatus.textContent = 'Ready';
+    }
+  });
+
+  // Capture Photo
+  function captureCanvasFrame() {
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext('2d');
+
+    const filterMap = {
+      none:      'none',
+      grayscale: 'grayscale(1) contrast(1.08)',
+      sepia:     'sepia(0.65) saturate(1.2) contrast(1.05)',
+      cool:      'saturate(1.15) hue-rotate(-12deg) brightness(1.02)',
+      warm:      'saturate(1.2) hue-rotate(10deg) brightness(1.04)',
+      cyber:     'contrast(1.3) saturate(1.8) hue-rotate(145deg)',
+      noir:      'grayscale(1) contrast(1.7) brightness(0.9)',
+      vintage:   'sepia(0.35) contrast(1.15) saturate(1.3) brightness(0.95)',
+      invert:    'invert(1) hue-rotate(180deg)'
+    };
+    ctx.filter = filterMap[currentFx] || 'none';
+
+    if (mirrored) {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
+  }
+
+  function doSingleCapture() {
+    if (!currentStream) return;
+
+    if (flashOn) {
+      flashOverlay.classList.remove('fire');
+      void flashOverlay.offsetWidth;
+      flashOverlay.classList.add('fire');
+    }
+
+    playShutterSound();
+    const dataUrl = captureCanvasFrame();
+    addCapture({
+      id: Date.now() + Math.random(),
+      type: 'photo',
+      url: dataUrl
+    });
+
+    recDot.style.display = 'inline-block';
+    setTimeout(() => { recDot.style.display = 'none'; }, 300);
+  }
+
+  async function executeCaptureSequence() {
+    if (timerActive) return;
+    
+    if (currentTimer > 0) {
+      timerActive = true;
+      let count = currentTimer;
+      timerCount.textContent = count;
+      timerCount.classList.add('show');
+      playBeepSound(false);
+
+      await new Promise(resolve => {
+        const interval = setInterval(() => {
+          count--;
+          if (count > 0) {
+            timerCount.textContent = count;
+            playBeepSound(false);
+          } else {
+            clearInterval(interval);
+            timerCount.classList.remove('show');
+            playBeepSound(true);
+            timerActive = false;
+            resolve();
+          }
+        }, 1000);
+      });
+    }
+
+    for (let i = 0; i < currentBurst; i++) {
+      doSingleCapture();
+      if (currentBurst > 1 && i < currentBurst - 1) {
+        await new Promise(r => setTimeout(r, 220));
+      }
+    }
+  }
+
+  // Video Recording Logic
+  function startVideoRecording() {
+    if (!currentStream) return;
+    recordedChunks = [];
+    
+    let options = { mimeType: 'video/webm;codecs=vp9,opus' };
+    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+      options = { mimeType: 'video/webm' };
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/mp4' };
+      }
+    }
+
+    try {
+      mediaRecorder = new MediaRecorder(currentStream, options);
+    } catch (e) {
+      mediaRecorder = new MediaRecorder(currentStream);
+    }
+
+    mediaRecorder.ondataavailable = e => {
+      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
+      const blobUrl = URL.createObjectURL(blob);
+      addCapture({
+        id: Date.now(),
+        type: 'video',
+        url: blobUrl,
+        blob: blob
+      });
+    };
+
+    mediaRecorder.start(100);
+    isRecording = true;
+    recordStartTime = Date.now();
+    dockContainer.classList.add('recording');
+    recDot.style.display = 'inline-block';
+
+    recordTimerInterval = setInterval(() => {
+      const diff = Math.floor((Date.now() - recordStartTime) / 1000);
+      const m = String(Math.floor(diff / 60)).padStart(2, '0');
+      const s = String(diff % 60).padStart(2, '0');
+      hudStatus.textContent = `REC ${m}:${s}`;
+    }, 500);
+  }
+
+  function stopVideoRecording() {
+    if (!mediaRecorder || !isRecording) return;
+    mediaRecorder.stop();
+    isRecording = false;
+    clearInterval(recordTimerInterval);
+    dockContainer.classList.remove('recording');
+    recDot.style.display = 'none';
+    hudStatus.textContent = 'Video Saved';
+    playShutterSound();
+    setTimeout(() => { hudStatus.textContent = 'Video Ready'; }, 2000);
+  }
+
+  function handleShutter() {
+    if (currentMode === 'photo') {
+      executeCaptureSequence();
+    } else {
+      if (!isRecording) startVideoRecording();
+      else stopVideoRecording();
+    }
+  }
+
+  shutterBtn.addEventListener('click', handleShutter);
+
+  // Keyboard Shortcuts
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Escape') {
+      if (previewModal.classList.contains('active')) closeModal();
+      else if (sidebar.classList.contains('open')) closeSidebar();
+      return;
+    }
+    if (e.code === 'Space' && !e.repeat && document.activeElement.tagName !== 'SELECT') {
+      e.preventDefault();
+      handleShutter();
+    }
+  });
+
+  // Filmstrip Item Addition
+  function addCapture(item) {
+    if (fsEmpty) fsEmpty.remove();
+    captures.unshift(item);
+    shotCounter.textContent = `${captures.length} ${captures.length === 1 ? 'item' : 'items'}`;
+
+    const shot = document.createElement('div');
+    shot.className = 'shot';
+    shot.dataset.id = item.id;
+
+    if (item.type === 'photo') {
+      shot.style.backgroundImage = `url(${item.url})`;
+    } else {
+      shot.innerHTML = `<span class="badge-vid">▶ VID</span>`;
+      shot.style.backgroundColor = '#1c1c1e';
+    }
+
+    const del = document.createElement('span');
+    del.className = 'del';
+    del.textContent = '✕';
+    del.title = 'Delete capture';
+    del.addEventListener('click', ev => {
+      ev.stopPropagation();
+      deleteCapture(item.id, shot);
+    });
+
+    shot.appendChild(del);
+    shot.addEventListener('click', () => openModal(item));
+
+    filmstrip.prepend(shot);
+    filmstrip.scrollTo({ left: 0, behavior: 'smooth' });
+  }
+
+  function deleteCapture(id, el) {
+    captures = captures.filter(c => c.id !== id);
+    shotCounter.textContent = `${captures.length} ${captures.length === 1 ? 'item' : 'items'}`;
+    if (el) el.remove();
+    if (captures.length === 0) filmstrip.appendChild(fsEmpty);
+  }
+
+  // Preview Modal
+  function openModal(item) {
+    activeModalItem = item;
+    modalMediaWrap.innerHTML = '';
+
+    if (item.type === 'photo') {
+      const img = document.createElement('img');
+      img.src = item.url;
+      modalMediaWrap.appendChild(img);
+      modalDownloadBtn.onclick = () => {
+        const a = document.createElement('a');
+        a.href = item.url;
+        a.download = `photo_${item.id}.png`;
+        a.click();
+      };
+    } else {
+      const vid = document.createElement('video');
+      vid.src = item.url;
+      vid.controls = true;
+      vid.autoplay = true;
+      modalMediaWrap.appendChild(vid);
+      modalDownloadBtn.onclick = () => {
+        const a = document.createElement('a');
+        a.href = item.url;
+        a.download = `video_${item.id}.webm`;
+        a.click();
+      };
+    }
+
+    previewModal.classList.add('active');
+  }
+
+  function closeModal() {
+    previewModal.classList.remove('active');
+    modalMediaWrap.innerHTML = '';
+    activeModalItem = null;
+  }
+
+  modalCloseBtn.addEventListener('click', closeModal);
+  previewModal.addEventListener('click', e => {
+    if (e.target === previewModal) closeModal();
+  });
+
+  modalDeleteBtn.addEventListener('click', () => {
+    if (!activeModalItem) return;
+    const shotEl = filmstrip.querySelector(`.shot[data-id="${activeModalItem.id}"]`);
+    deleteCapture(activeModalItem.id, shotEl);
+    closeModal();
+  });
+
+  // Batch Save All
+  downloadAllBtn.addEventListener('click', () => {
+    if (captures.length === 0) return;
+    captures.forEach((item, index) => {
+      setTimeout(() => {
+        const a = document.createElement('a');
+        a.href = item.url;
+        a.download = item.type === 'photo' ? `photo_${index + 1}.png` : `video_${index + 1}.webm`;
+        a.click();
+      }, index * 200);
+    });
+  });
+
+  // Initialize
+  listDevices();
+})();
+</script>
+</body>
+</html>

@@ -57,6 +57,7 @@ private:
     ControlSliders *m_sliders = nullptr;
     QComboBox *m_deviceCombo = nullptr;
     QComboBox *m_formatCombo = nullptr;
+    QComboBox *m_resolutionCombo = nullptr;
     QPushButton *m_photoBtn = nullptr;
     QPushButton *m_recordBtn = nullptr;
     QLabel *m_statusLabel = nullptr;

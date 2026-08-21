@@ -88,6 +88,12 @@ target_link_libraries(c-mi PRIVATE
     pthread
 )
 
+set_target_properties(c-mi PROPERTIES
+    BUILD_RPATH "$ORIGIN/../lib/c-mi"
+    BUILD_WITH_INSTALL_RPATH TRUE
+    INSTALL_RPATH "$ORIGIN/../lib/c-mi"
+)
+
 if(CMI_STATIC)
     target_link_options(c-mi PRIVATE
         -static-libgcc
@@ -98,14 +104,6 @@ if(CMI_STATIC)
     else()
         message(FATAL_ERROR "CMI_STATIC requires Qt's qt_import_plugins command")
     endif()
-
-    # Some xcb/X11 helper libraries (e.g. libxcb-cursor) have no static
-    # archive on Ubuntu, so they stay dynamic. Look for them next to the
-    # binary so toolchain/package.sh can bundle them for portability.
-    set_target_properties(c-mi PROPERTIES
-        BUILD_WITH_INSTALL_RPATH TRUE
-        INSTALL_RPATH "$ORIGIN/../lib/c-mi"
-    )
 endif()
 
 # --- Install / XDG integration ---
