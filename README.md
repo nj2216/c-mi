@@ -64,6 +64,17 @@ docker rm "$container"
 The resulting `c-mi` executable is statically linked and can be copied to a
 matching Linux system without installing the application libraries.
 
+To build the static Qt6/FFmpeg prefix directly on the host instead of in
+Docker, run `toolchain/build-static.sh` (needs `sudo`; builds Qt from source,
+which takes a while):
+
+```sh
+./toolchain/build-static.sh
+cmake -B build-static -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE=toolchain/static-linux.cmake -DCMI_STATIC=ON
+cmake --build build-static --parallel
+```
+
 Install (binary, `.desktop` entry, and XDG hicolor icon):
 
 ```sh
@@ -73,6 +84,36 @@ sudo cmake --install build
 The desktop file registers under `AudioVideo;Video;Photography;` so it shows up
 in the XFCE Whisker menu, and the icon installs into the hicolor theme so it
 follows XDG icon theme lookup.
+
+### Packaging a distributable build
+
+`toolchain/package.sh` bundles a built `c-mi` binary (native or static) with
+its `.desktop` entry and icon into a tarball:
+
+```sh
+./toolchain/package.sh                 # packages build/c-mi by default
+BINARY=build-static/c-mi ./toolchain/package.sh   # package a static build
+```
+
+This writes `dist/c-mi-<version>-linux-<arch>.tar.gz`, containing `bin/c-mi`,
+the `.desktop`/icon files, and a bundled `install.sh`.
+
+### Installing without sudo
+
+Users can install the package into `~/.local` without root:
+
+```sh
+tar -xzf c-mi-<version>-linux-<arch>.tar.gz
+./c-mi-<version>-linux-<arch>/install.sh
+```
+
+This installs to `~/.local/bin`, `~/.local/share/applications`, and
+`~/.local/share/icons/hicolor/scalable/apps` (override with `PREFIX`). Add
+`~/.local/bin` to `PATH` if it isn't already, if prompted. Remove with:
+
+```sh
+./c-mi-<version>-linux-<arch>/install.sh --uninstall
+```
 
 ## Features
 

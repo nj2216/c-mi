@@ -7,7 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake build-essential ca-certificates cmake curl file \
     libdbus-1-dev libfontconfig1-dev libfreetype6-dev libgl-dev \
-    libglib2.0-dev libice-dev libicu-dev libinput-dev libjpeg-dev \
+    libglib2.0-dev libice-dev libinput-dev libjpeg-dev \
     libpng-dev libsm-dev libx11-dev libx11-xcb-dev libxcb1-dev \
     libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev \
     libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev \
@@ -26,7 +26,7 @@ RUN curl -fsSLO https://download.qt.io/official_releases/qt/6.8/${QT_VERSION}/su
     && ./configure -static -release -opensource -confirm-license \
         -prefix /opt/cmi-static/qt -nomake tests -nomake examples \
         -qt-zlib -qt-pcre -qt-freetype -qt-harfbuzz -qt-libpng -qt-libjpeg \
-        -no-openssl -xcb -xcb-xlib -opengl desktop \
+        -no-openssl -no-icu -xcb -xcb-xlib -opengl desktop \
     && cmake --build . --parallel \
     && cmake --install .
 
@@ -47,7 +47,7 @@ RUN cmake -S . -B /tmp/cmi-build -GNinja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_TOOLCHAIN_FILE=/opt/cmi-static/static-linux.cmake \
         -DCMI_STATIC=ON \
-    && cmake --build /tmp/cmi-build \
+    && cmake --build /tmp/cmi-build --parallel \
     && install -Dm755 /tmp/cmi-build/c-mi /opt/cmi-static/bin/c-mi
 
 FROM scratch
