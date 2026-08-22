@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QButtonGroup>
+#include <QPoint>
 #include <vector>
 
 #include "PreviewWidget.h"
@@ -43,8 +44,8 @@ public:
     void setRecording(bool rec);
     bool isRecording() const { return m_recording; }
 
-    QSize sizeHint() const override { return QSize(60, 60); }
-    QSize minimumSizeHint() const override { return QSize(60, 60); }
+    QSize sizeHint() const override { return QSize(58, 58); }
+    QSize minimumSizeHint() const override { return QSize(58, 58); }
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -61,6 +62,17 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     enum class AppMode { Photo, Video };
+    enum class ResizeEdge {
+        None,
+        Left,
+        Right,
+        Top,
+        Bottom,
+        TopLeft,
+        TopRight,
+        BottomLeft,
+        BottomRight
+    };
 
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
@@ -69,6 +81,10 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void onDevicesChanged();
@@ -94,6 +110,8 @@ private:
     void stopRecording();
     void playShutterSfx();
     void playBeepSfx(bool highPitch);
+    ResizeEdge calculateResizeEdge(const QPoint &pos) const;
+    void updateCursorForEdge(ResizeEdge edge);
 
     DeviceManager *m_devMgr = nullptr;
     CaptureDevice *m_capture = nullptr;  // lives on m_captureThread
@@ -103,8 +121,15 @@ private:
     VideoEncoder *m_encoder = nullptr;
     TrayIcon *m_tray = nullptr;
 
-    // Viewfinder & Stage
+    // Window Chrome & TitleBar
     QWidget *m_centralRoot = nullptr;
+    QWidget *m_titleBar = nullptr;
+    QPushButton *m_closeDot = nullptr;
+    QPushButton *m_minDot = nullptr;
+    QPushButton *m_maxDot = nullptr;
+    QPushButton *m_headerSettingsBtn = nullptr;
+
+    // Viewfinder & Stage
     PreviewWidget *m_preview = nullptr;
     QLabel *m_hudStatus = nullptr;
     QLabel *m_recDot = nullptr;
@@ -119,7 +144,6 @@ private:
     ShutterButton *m_shutterBtn = nullptr;
     QPushButton *m_switchCamBtn = nullptr;
     QPushButton *m_dockSettingsBtn = nullptr;
-    QPushButton *m_headerSettingsBtn = nullptr;
 
     // Slide-out Sidebar & Backdrop
     QWidget *m_sidebar = nullptr;
@@ -140,7 +164,15 @@ private:
     ToggleSwitch *m_micToggle = nullptr;
     ControlSliders *m_sliders = nullptr;
 
-    // State
+    // Window Drag & Resize State
+    bool m_isTitleDragging = false;
+    QPoint m_dragStartPos;
+    ResizeEdge m_currentResizeEdge = ResizeEdge::None;
+    bool m_isResizing = false;
+    QRect m_resizeStartGeometry;
+    QPoint m_resizeStartPos;
+
+    // App State
     AppMode m_appMode = AppMode::Photo;
     bool m_recording = false;
     QString m_currentDeviceKey;

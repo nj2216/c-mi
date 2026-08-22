@@ -12,18 +12,18 @@ namespace cmi {
 ThumbnailCard::ThumbnailCard(const MediaItem &item, QWidget *parent)
     : QWidget(parent), m_item(item)
 {
-    setFixedSize(58, 58);
+    setFixedSize(56, 56);
     setCursor(Qt::PointingHandCursor);
 
     m_deleteBtn = new QPushButton(QStringLiteral("✕"), this);
-    m_deleteBtn->setGeometry(40, 2, 16, 16);
+    m_deleteBtn->setGeometry(39, -2, 17, 17);
     m_deleteBtn->setStyleSheet(QStringLiteral(
         "QPushButton {"
-        "  background: rgba(255, 255, 255, 0.95);"
+        "  background: #ffffff;"
         "  color: #111111;"
         "  border: none;"
         "  border-radius: 8px;"
-        "  font-size: 8px;"
+        "  font-size: 9px;"
         "  font-weight: 800;"
         "  padding: 0px;"
         "}"
@@ -67,24 +67,24 @@ void ThumbnailCard::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::SmoothPixmapTransform);
 
-    QRectF rect(2, 2, 54, 54);
+    QRectF rect(2, 2, 52, 52);
     QPainterPath path;
     path.addRoundedRect(rect, 10, 10);
     p.setClipPath(path);
 
     if (!m_item.thumbnail.isNull()) {
-        QPixmap pix = QPixmap::fromImage(m_item.thumbnail.scaled(54, 54, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
-        int offsetX = (pix.width() - 54) / 2;
-        int offsetY = (pix.height() - 54) / 2;
-        p.drawPixmap(2, 2, pix, offsetX, offsetY, 54, 54);
+        QPixmap pix = QPixmap::fromImage(m_item.thumbnail.scaled(52, 52, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+        int offsetX = (pix.width() - 52) / 2;
+        int offsetY = (pix.height() - 52) / 2;
+        p.drawPixmap(2, 2, pix, offsetX, offsetY, 52, 52);
     } else {
-        p.fillRect(rect, QColor(25, 25, 28));
+        p.fillRect(rect, QColor(0, 0, 0));
     }
 
     // Video badge
     if (m_item.type == MediaItem::Type::Video) {
         p.setClipping(false);
-        QRectF badgeRect(5, 38, 30, 14);
+        QRectF badgeRect(5, 36, 28, 14);
         p.setPen(Qt::NoPen);
         p.setBrush(QColor(0, 0, 0, 190));
         p.drawRoundedRect(badgeRect, 4, 4);
@@ -117,24 +117,25 @@ CapturesTray::CapturesTray(QWidget *parent)
     setFixedHeight(78);
 
     auto *mainLayout = new QHBoxLayout(this);
-    mainLayout->setContentsMargins(12, 6, 12, 6);
+    mainLayout->setContentsMargins(12, 8, 12, 8);
     mainLayout->setSpacing(12);
 
     // Left metadata column
     auto *metaWrap = new QWidget(this);
     auto *metaLayout = new QVBoxLayout(metaWrap);
     metaLayout->setContentsMargins(0, 2, 10, 2);
-    metaLayout->setSpacing(1);
+    metaLayout->setSpacing(2);
 
     m_titleLabel = new QLabel(QStringLiteral("ROLL"), metaWrap);
-    m_titleLabel->setStyleSheet(QStringLiteral("color: #8e8e93; font-size: 10px; font-weight: 700; letter-spacing: 0.06em;"));
+    m_titleLabel->setStyleSheet(QStringLiteral("color: #8e8e93; font-size: 11px; font-weight: 700; letter-spacing: 0.04em;"));
     metaLayout->addWidget(m_titleLabel);
 
     m_countLabel = new QLabel(QStringLiteral("0 items"), metaWrap);
-    m_countLabel->setStyleSheet(QStringLiteral("color: #ffffff; font-size: 11px; font-weight: 600;"));
+    m_countLabel->setStyleSheet(QStringLiteral("color: #ffffff; font-size: 12px; font-weight: 600;"));
     metaLayout->addWidget(m_countLabel);
 
-    m_folderBtn = new QPushButton(QStringLiteral("Open Folder"), metaWrap);
+    m_folderBtn = new QPushButton(QStringLiteral("Save All"), metaWrap);
+    m_folderBtn->setToolTip(QStringLiteral("Open captured files folder"));
     m_folderBtn->setCursor(Qt::PointingHandCursor);
     m_folderBtn->setStyleSheet(QStringLiteral(
         "QPushButton {"
@@ -145,6 +146,7 @@ CapturesTray::CapturesTray(QWidget *parent)
         "  font-weight: 600;"
         "  text-align: left;"
         "  padding: 0px;"
+        "  margin-top: 2px;"
         "}"
         "QPushButton:hover {"
         "  text-decoration: underline;"
@@ -172,11 +174,12 @@ CapturesTray::CapturesTray(QWidget *parent)
     m_cardContainer->setStyleSheet(QStringLiteral("background: transparent;"));
     m_cardLayout = new QHBoxLayout(m_cardContainer);
     m_cardLayout->setContentsMargins(4, 0, 4, 0);
-    m_cardLayout->setSpacing(8);
+    m_cardLayout->setSpacing(10);
     m_cardLayout->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
     m_emptyLabel = new QLabel(QStringLiteral("Your captured photos and videos will appear here."), m_cardContainer);
     m_emptyLabel->setStyleSheet(QStringLiteral("color: rgba(255, 255, 255, 0.4); font-size: 11.5px; font-style: italic;"));
+    m_cardLayout->addWidget(m_emptyLabel);
     m_cardLayout->addWidget(m_emptyLabel);
 
     m_scrollArea->setWidget(m_cardContainer);

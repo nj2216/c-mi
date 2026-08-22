@@ -82,28 +82,32 @@ void ShutterButton::paintEvent(QPaintEvent *)
     const qreal h = height();
     const QPointF center(w / 2.0, h / 2.0);
 
-    // Outer ring
-    p.setPen(QPen(QColor(255, 255, 255, m_hovered ? 200 : 120), 3.0));
-    p.setBrush(QColor(255, 255, 255, 30));
-    p.drawEllipse(center, (w / 2.0) - 2.5, (h / 2.0) - 2.5);
+    // Outer ring (58px, 3px border)
+    p.setPen(QPen(QColor(255, 255, 255, m_hovered ? 220 : 90), 3.0));
+    p.setBrush(Qt::white);
+    p.drawEllipse(center, 26.5, 26.5);
 
     // Inner shape
     p.setPen(Qt::NoPen);
     if (m_mode == Mode::Photo) {
-        // White inner circle
-        p.setBrush(isDown() ? QColor(220, 220, 225) : Qt::white);
+        // White inner circle (44px) with subtle inset border
+        p.setBrush(isDown() ? QColor(228, 228, 232) : Qt::white);
+        p.drawEllipse(center, 22.0, 22.0);
+
+        p.setPen(QPen(QColor(0, 0, 0, 25), 2.0));
+        p.setBrush(Qt::NoBrush);
         p.drawEllipse(center, 21.0, 21.0);
     } else {
         // Video mode
         if (m_recording) {
-            // Red rounded square
+            // Red rounded square (22x22, radius 5)
             p.setBrush(QColor(255, 59, 48)); // #ff3b30
             QRectF sq(center.x() - 11, center.y() - 11, 22, 22);
             p.drawRoundedRect(sq, 5, 5);
         } else {
-            // Red inner circle
-            p.setBrush(isDown() ? QColor(220, 45, 35) : QColor(255, 59, 48));
-            p.drawEllipse(center, 21.0, 21.0);
+            // Red inner circle (44px)
+            p.setBrush(isDown() ? QColor(220, 40, 32) : QColor(255, 59, 48));
+            p.drawEllipse(center, 22.0, 22.0);
         }
     }
 }
@@ -113,7 +117,12 @@ void ShutterButton::paintEvent(QPaintEvent *)
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle(QStringLiteral("Camera Pro — c~mi"));
+    // Frameless window with custom Window Chrome
+    setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+    setAttribute(Qt::WA_TranslucentBackground);
+    setMouseTracking(true);
+
+    setWindowTitle(QStringLiteral("Camera Pro"));
 
     m_devMgr = new DeviceManager(this);
     m_capture = new CaptureDevice;
@@ -213,51 +222,100 @@ MainWindow::~MainWindow()
 
 void MainWindow::buildUi()
 {
+    // The central widget IS the .window root (no outer whitespace margins)
     m_centralRoot = new QWidget(this);
-    m_centralRoot->setObjectName(QStringLiteral("centralRoot"));
-    auto *rootLayout = new QVBoxLayout(m_centralRoot);
-    rootLayout->setContentsMargins(16, 12, 16, 14);
-    rootLayout->setSpacing(10);
+    m_centralRoot->setObjectName(QStringLiteral("windowContainer"));
+    m_centralRoot->setMouseTracking(true);
 
-    // 1. Top Titlebar / Chrome
-    auto *titleBar = new QWidget(m_centralRoot);
-    titleBar->setObjectName(QStringLiteral("titleBar"));
-    titleBar->setFixedHeight(42);
-    auto *titleLayout = new QHBoxLayout(titleBar);
-    titleLayout->setContentsMargins(14, 0, 14, 0);
+    auto *windowLayout = new QVBoxLayout(m_centralRoot);
+    windowLayout->setContentsMargins(0, 0, 0, 0);
+    windowLayout->setSpacing(0);
 
-    auto *windowControls = new QWidget(titleBar);
+    // 1. Titlebar (height: 42px)
+    m_titleBar = new QWidget(m_centralRoot);
+    m_titleBar->setObjectName(QStringLiteral("titleBar"));
+    m_titleBar->setFixedHeight(42);
+    m_titleBar->installEventFilter(this);
+
+    auto *titleLayout = new QHBoxLayout(m_titleBar);
+    titleLayout->setContentsMargins(16, 0, 16, 0);
+    titleLayout->setSpacing(0);
+
+    // Window controls dots (Red, Yellow, Green)
+    auto *windowControls = new QWidget(m_titleBar);
+    windowControls->setObjectName(QStringLiteral("windowControls"));
     auto *controlsLayout = new QHBoxLayout(windowControls);
     controlsLayout->setContentsMargins(0, 0, 0, 0);
-    controlsLayout->setSpacing(7);
-    for (const char *color : {"#ff5f57", "#febc2e", "#28c840"}) {
-        auto *dot = new QLabel(windowControls);
-        dot->setStyleSheet(QStringLiteral("background: %1; border-radius: 6px; min-width: 12px; min-height: 12px; max-width: 12px; max-height: 12px; border: 1px solid rgba(0,0,0,0.1);").arg(QString::fromLatin1(color)));
-        controlsLayout->addWidget(dot);
-    }
-    titleLayout->addWidget(windowControls);
+    controlsLayout->setSpacing(8);
 
-    auto *titleLabel = new QLabel(QStringLiteral("📸 Camera Pro"), titleBar);
+    m_closeDot = new QPushButton(windowControls);
+    m_closeDot->setObjectName(QStringLiteral("dotRed"));
+    m_closeDot->setFixedSize(12, 12);
+    m_closeDot->setCursor(Qt::PointingHandCursor);
+    m_closeDot->setToolTip(QStringLiteral("Close"));
+    connect(m_closeDot, &QPushButton::clicked, this, &MainWindow::close);
+
+    m_minDot = new QPushButton(windowControls);
+    m_minDot->setObjectName(QStringLiteral("dotYellow"));
+    m_minDot->setFixedSize(12, 12);
+    m_minDot->setCursor(Qt::PointingHandCursor);
+    m_minDot->setToolTip(QStringLiteral("Minimize"));
+    connect(m_minDot, &QPushButton::clicked, this, &MainWindow::showMinimized);
+
+    m_maxDot = new QPushButton(windowControls);
+    m_maxDot->setObjectName(QStringLiteral("dotGreen"));
+    m_maxDot->setFixedSize(12, 12);
+    m_maxDot->setCursor(Qt::PointingHandCursor);
+    m_maxDot->setToolTip(QStringLiteral("Maximize"));
+    connect(m_maxDot, &QPushButton::clicked, this, [this] {
+        if (isMaximized()) {
+            showNormal();
+        } else {
+            showMaximized();
+        }
+    });
+
+    controlsLayout->addWidget(m_closeDot);
+    controlsLayout->addWidget(m_minDot);
+    controlsLayout->addWidget(m_maxDot);
+    titleLayout->addWidget(windowControls, 0, Qt::AlignLeft | Qt::AlignVCenter);
+
+    // Centered Title: 📸 Camera Pro
+    auto *titleLabel = new QLabel(QStringLiteral("📸 Camera Pro"), m_titleBar);
     titleLabel->setAlignment(Qt::AlignCenter);
     titleLabel->setObjectName(QStringLiteral("titleLabel"));
-    titleLayout->addWidget(titleLabel, 1);
+    titleLayout->addWidget(titleLabel, 1, Qt::AlignCenter);
 
-    m_headerSettingsBtn = new QPushButton(QStringLiteral("⚙ Settings"), titleBar);
+    // Right Action: ⚙ Settings
+    auto *titleActions = new QWidget(m_titleBar);
+    auto *actionsLayout = new QHBoxLayout(titleActions);
+    actionsLayout->setContentsMargins(0, 0, 0, 0);
+    actionsLayout->setSpacing(8);
+
+    m_headerSettingsBtn = new QPushButton(QStringLiteral("⚙ Settings"), titleActions);
     m_headerSettingsBtn->setObjectName(QStringLiteral("headerSettingsBtn"));
     m_headerSettingsBtn->setCursor(Qt::PointingHandCursor);
     connect(m_headerSettingsBtn, &QPushButton::clicked, this, [this] {
         toggleSidebar(m_sidebar->isHidden());
     });
-    titleLayout->addWidget(m_headerSettingsBtn);
+    actionsLayout->addWidget(m_headerSettingsBtn);
+    titleLayout->addWidget(titleActions, 0, Qt::AlignRight | Qt::AlignVCenter);
 
-    rootLayout->addWidget(titleBar);
+    windowLayout->addWidget(m_titleBar);
 
-    // 2. Stage (Main Viewport & Filmstrip Tray)
-    auto *stage = new QWidget(m_centralRoot);
+    // 2. Body Area (Stage + Captures Tray + Dock)
+    auto *body = new QWidget(m_centralRoot);
+    body->setObjectName(QStringLiteral("bodyArea"));
+    auto *bodyLayout = new QVBoxLayout(body);
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
+    bodyLayout->setSpacing(0);
+
+    // Stage (Viewfinder Stage)
+    auto *stage = new QWidget(body);
     stage->setObjectName(QStringLiteral("stage"));
     auto *stageLayout = new QVBoxLayout(stage);
-    stageLayout->setContentsMargins(14, 14, 14, 10);
-    stageLayout->setSpacing(10);
+    stageLayout->setContentsMargins(16, 14, 16, 0);
+    stageLayout->setSpacing(0);
 
     // Frame Container holding OpenGL Preview, HUD pill, Countdown overlay, Empty state
     auto *frameContainer = new QWidget(stage);
@@ -290,7 +348,7 @@ void MainWindow::buildUi()
     auto *topPillAligner = new QWidget(frameContainer);
     topPillAligner->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     auto *pillAlignLayout = new QVBoxLayout(topPillAligner);
-    pillAlignLayout->setContentsMargins(0, 12, 0, 0);
+    pillAlignLayout->setContentsMargins(0, 14, 0, 0);
     pillAlignLayout->addWidget(topPill, 0, Qt::AlignHCenter | Qt::AlignTop);
     pillAlignLayout->addStretch();
     frameLayout->addWidget(topPillAligner, 0, 0);
@@ -320,7 +378,7 @@ void MainWindow::buildUi()
     msg->setObjectName(QStringLiteral("emptyMsg"));
     msg->setAlignment(Qt::AlignCenter);
     msg->setWordWrap(true);
-    msg->setMaximumWidth(320);
+    msg->setMaximumWidth(280);
     emptyLayout->addWidget(msg);
 
     auto *initBtn = new QPushButton(QStringLiteral("Turn On Camera"), m_emptyState);
@@ -344,13 +402,13 @@ void MainWindow::buildUi()
     });
     stageLayout->addWidget(m_capturesTray);
 
-    rootLayout->addWidget(stage, 1);
+    bodyLayout->addWidget(stage, 1);
 
-    // 3. Bottom Dock
-    auto *dockWrap = new QWidget(m_centralRoot);
+    // 3. Bottom Dock Wrap
+    auto *dockWrap = new QWidget(body);
     dockWrap->setObjectName(QStringLiteral("dockWrap"));
     auto *dockWrapLayout = new QVBoxLayout(dockWrap);
-    dockWrapLayout->setContentsMargins(0, 4, 0, 2);
+    dockWrapLayout->setContentsMargins(20, 6, 20, 14);
     dockWrapLayout->setSpacing(6);
     dockWrapLayout->setAlignment(Qt::AlignCenter);
 
@@ -388,13 +446,13 @@ void MainWindow::buildUi()
     auto *dock = new QWidget(dockWrap);
     dock->setObjectName(QStringLiteral("dock"));
     auto *dockLayout = new QHBoxLayout(dock);
-    dockLayout->setContentsMargins(18, 5, 18, 5);
+    dockLayout->setContentsMargins(18, 6, 18, 6);
     dockLayout->setSpacing(20);
     dockLayout->setAlignment(Qt::AlignCenter);
 
     m_switchCamBtn = new QPushButton(QStringLiteral("⟲"), dock);
     m_switchCamBtn->setObjectName(QStringLiteral("dockIconBtn"));
-    m_switchCamBtn->setToolTip(QStringLiteral("Switch Camera"));
+    m_switchCamBtn->setToolTip(QStringLiteral("Switch camera"));
     m_switchCamBtn->setCursor(Qt::PointingHandCursor);
     connect(m_switchCamBtn, &QPushButton::clicked, this, [this] {
         if (m_deviceCombo && m_deviceCombo->count() > 1) {
@@ -408,7 +466,7 @@ void MainWindow::buildUi()
 
     m_dockSettingsBtn = new QPushButton(QStringLiteral("⚙"), dock);
     m_dockSettingsBtn->setObjectName(QStringLiteral("dockIconBtn"));
-    m_dockSettingsBtn->setToolTip(QStringLiteral("Camera Settings"));
+    m_dockSettingsBtn->setToolTip(QStringLiteral("Settings"));
     m_dockSettingsBtn->setCursor(Qt::PointingHandCursor);
     connect(m_dockSettingsBtn, &QPushButton::clicked, this, [this] {
         toggleSidebar(m_sidebar->isHidden());
@@ -419,7 +477,9 @@ void MainWindow::buildUi()
     dockLayout->addWidget(m_dockSettingsBtn);
 
     dockWrapLayout->addWidget(dock, 0, Qt::AlignCenter);
-    rootLayout->addWidget(dockWrap);
+    bodyLayout->addWidget(dockWrap);
+
+    windowLayout->addWidget(body, 1);
 
     // 4. Slide-Out Settings Sidebar & Backdrop
     m_sidebarBackdrop = new QWidget(m_centralRoot);
@@ -431,13 +491,13 @@ void MainWindow::buildUi()
     m_sidebar->hide();
 
     auto *sidebarLayout = new QVBoxLayout(m_sidebar);
-    sidebarLayout->setContentsMargins(16, 16, 16, 16);
-    sidebarLayout->setSpacing(14);
+    sidebarLayout->setContentsMargins(18, 16, 18, 16);
+    sidebarLayout->setSpacing(16);
 
     // Sidebar Header
     auto *sbHeader = new QWidget(m_sidebar);
     auto *sbHeaderLayout = new QHBoxLayout(sbHeader);
-    sbHeaderLayout->setContentsMargins(0, 0, 0, 6);
+    sbHeaderLayout->setContentsMargins(0, 0, 0, 8);
     auto *sbTitle = new QLabel(QStringLiteral("Camera Settings"), sbHeader);
     sbTitle->setObjectName(QStringLiteral("sidebarHeaderTitle"));
     auto *closeSbBtn = new QPushButton(QStringLiteral("✕"), sbHeader);
@@ -462,7 +522,7 @@ void MainWindow::buildUi()
     sidebarContent->setStyleSheet(QStringLiteral("background: transparent;"));
     auto *contentLay = new QVBoxLayout(sidebarContent);
     contentLay->setContentsMargins(0, 0, 0, 0);
-    contentLay->setSpacing(14);
+    contentLay->setSpacing(16);
 
     // Source Camera Section
     auto *camSection = new QWidget(sidebarContent);
@@ -683,16 +743,54 @@ void MainWindow::applyStyle()
 {
     const QString css = QStringLiteral(R"(
 QMainWindow {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #eef0f3, stop:1 #d8dbe0);
-    color: #1d1d1f;
-}
-QWidget#centralRoot {
     background: transparent;
 }
+QWidget#windowContainer {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 18px;
+}
 QWidget#titleBar {
-    background: rgba(255, 255, 255, 0.65);
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.75);
+    border-top-left-radius: 18px;
+    border-top-right-radius: 18px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+QPushButton#dotRed {
+    background: #ff5f57;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 6px;
+    min-width: 12px;
+    min-height: 12px;
+    max-width: 12px;
+    max-height: 12px;
+}
+QPushButton#dotRed:hover {
+    background: #e0443e;
+}
+QPushButton#dotYellow {
+    background: #febc2e;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 6px;
+    min-width: 12px;
+    min-height: 12px;
+    max-width: 12px;
+    max-height: 12px;
+}
+QPushButton#dotYellow:hover {
+    background: #dea123;
+}
+QPushButton#dotGreen {
+    background: #28c840;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 6px;
+    min-width: 12px;
+    min-height: 12px;
+    max-width: 12px;
+    max-height: 12px;
+}
+QPushButton#dotGreen:hover {
+    background: #1fa834;
 }
 QLabel#titleLabel {
     color: #1d1d1f;
@@ -712,15 +810,17 @@ QPushButton#headerSettingsBtn {
 QPushButton#headerSettingsBtn:hover {
     background: rgba(0, 0, 0, 0.06);
 }
+QWidget#bodyArea {
+    background: #0d0d0f;
+    border-bottom-left-radius: 18px;
+    border-bottom-right-radius: 18px;
+}
 QWidget#stage {
     background: #0d0d0f;
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
 }
 QWidget#frameContainer {
     background: #000000;
     border-radius: 14px;
-    overflow: hidden;
 }
 QWidget#topPill {
     background: rgba(0, 0, 0, 0.55);
@@ -735,7 +835,7 @@ QLabel#hudStatusText {
 }
 QLabel#countdownLabel {
     color: #ffffff;
-    font-size: 110px;
+    font-size: 120px;
     font-weight: 800;
 }
 QWidget#emptyState {
@@ -755,7 +855,7 @@ QPushButton#initBtn {
     color: #1d1d1f;
     border: none;
     border-radius: 100px;
-    padding: 8px 22px;
+    padding: 8px 20px;
     font-size: 13px;
     font-weight: 600;
 }
@@ -763,7 +863,9 @@ QPushButton#initBtn:hover {
     background: #f2f2f4;
 }
 QWidget#dockWrap {
-    background: transparent;
+    background: #0d0d0f;
+    border-bottom-left-radius: 18px;
+    border-bottom-right-radius: 18px;
 }
 QWidget#modeSelector {
     background: transparent;
@@ -774,6 +876,7 @@ QPushButton#modeBtn {
     color: rgba(255, 255, 255, 0.4);
     font-size: 12px;
     font-weight: 600;
+    text-transform: uppercase;
     letter-spacing: 0.05em;
     padding: 2px 8px;
 }
@@ -796,17 +899,20 @@ QPushButton#dockIconBtn {
     border: none;
     background: rgba(255, 255, 255, 0.12);
     color: #ffffff;
-    font-size: 16px;
+    font-size: 15px;
 }
 QPushButton#dockIconBtn:hover {
     background: rgba(255, 255, 255, 0.25);
 }
 QWidget#sidebarBackdrop {
     background: rgba(0, 0, 0, 0.35);
+    border-radius: 18px;
 }
 QWidget#sidebar {
     background: rgba(255, 255, 255, 0.94);
     border-left: 1px solid rgba(0, 0, 0, 0.08);
+    border-top-right-radius: 18px;
+    border-bottom-right-radius: 18px;
 }
 QLabel#sidebarHeaderTitle {
     color: #1d1d1f;
@@ -828,9 +934,9 @@ QPushButton#closeSidebarBtn:hover {
 }
 QLabel#fieldLabel {
     color: #86868b;
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.05em;
 }
 QLabel#deviceStatusPill {
     color: #34c759;
@@ -877,7 +983,7 @@ QSlider::handle:horizontal {
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
-    const int drawerW = 300;
+    const int drawerW = 290;
     m_sidebarBackdrop->setGeometry(m_centralRoot->rect());
     m_previewModal->setGeometry(m_centralRoot->rect());
     if (!m_sidebar->isHidden()) {
@@ -887,9 +993,175 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     }
 }
 
+MainWindow::ResizeEdge MainWindow::calculateResizeEdge(const QPoint &pos) const
+{
+    if (isMaximized()) return ResizeEdge::None;
+    const int border = 6;
+    const int w = width();
+    const int h = height();
+
+    const bool left = pos.x() <= border;
+    const bool right = pos.x() >= w - border;
+    const bool top = pos.y() <= border;
+    const bool bottom = pos.y() >= h - border;
+
+    if (top && left) return ResizeEdge::TopLeft;
+    if (top && right) return ResizeEdge::TopRight;
+    if (bottom && left) return ResizeEdge::BottomLeft;
+    if (bottom && right) return ResizeEdge::BottomRight;
+    if (left) return ResizeEdge::Left;
+    if (right) return ResizeEdge::Right;
+    if (top) return ResizeEdge::Top;
+    if (bottom) return ResizeEdge::Bottom;
+
+    return ResizeEdge::None;
+}
+
+void MainWindow::updateCursorForEdge(ResizeEdge edge)
+{
+    switch (edge) {
+    case ResizeEdge::Left:
+    case ResizeEdge::Right:
+        setCursor(Qt::SizeHorCursor);
+        break;
+    case ResizeEdge::Top:
+    case ResizeEdge::Bottom:
+        setCursor(Qt::SizeVerCursor);
+        break;
+    case ResizeEdge::TopLeft:
+    case ResizeEdge::BottomRight:
+        setCursor(Qt::SizeFDiagCursor);
+        break;
+    case ResizeEdge::TopRight:
+    case ResizeEdge::BottomLeft:
+        setCursor(Qt::SizeBDiagCursor);
+        break;
+    default:
+        unsetCursor();
+        break;
+    }
+}
+
+void MainWindow::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton && !isMaximized()) {
+        ResizeEdge edge = calculateResizeEdge(event->pos());
+        if (edge != ResizeEdge::None) {
+            m_isResizing = true;
+            m_currentResizeEdge = edge;
+            m_resizeStartGeometry = geometry();
+            m_resizeStartPos = event->globalPosition().toPoint();
+            event->accept();
+            return;
+        }
+    }
+    QMainWindow::mousePressEvent(event);
+}
+
+void MainWindow::mouseMoveEvent(QMouseEvent *event)
+{
+    if (m_isResizing) {
+        QPoint delta = event->globalPosition().toPoint() - m_resizeStartPos;
+        QRect geom = m_resizeStartGeometry;
+
+        switch (m_currentResizeEdge) {
+        case ResizeEdge::Left:
+            geom.setLeft(geom.left() + delta.x());
+            break;
+        case ResizeEdge::Right:
+            geom.setRight(geom.right() + delta.x());
+            break;
+        case ResizeEdge::Top:
+            geom.setTop(geom.top() + delta.y());
+            break;
+        case ResizeEdge::Bottom:
+            geom.setBottom(geom.bottom() + delta.y());
+            break;
+        case ResizeEdge::TopLeft:
+            geom.setTopLeft(geom.topLeft() + delta);
+            break;
+        case ResizeEdge::TopRight:
+            geom.setTopRight(geom.topRight() + delta);
+            break;
+        case ResizeEdge::BottomLeft:
+            geom.setBottomLeft(geom.bottomLeft() + delta);
+            break;
+        case ResizeEdge::BottomRight:
+            geom.setBottomRight(geom.bottomRight() + delta);
+            break;
+        default:
+            break;
+        }
+
+        if (geom.width() >= minimumWidth() && geom.height() >= minimumHeight()) {
+            setGeometry(geom);
+        }
+        event->accept();
+        return;
+    }
+
+    ResizeEdge edge = calculateResizeEdge(event->pos());
+    updateCursorForEdge(edge);
+    QMainWindow::mouseMoveEvent(event);
+}
+
+void MainWindow::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (m_isResizing) {
+        m_isResizing = false;
+        m_currentResizeEdge = ResizeEdge::None;
+        unsetCursor();
+        event->accept();
+        return;
+    }
+    QMainWindow::mouseReleaseEvent(event);
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_titleBar) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton) {
+                QWidget *child = m_titleBar->childAt(me->pos());
+                if (!child || qobject_cast<QLabel *>(child)) {
+                    m_isTitleDragging = true;
+                    m_dragStartPos = me->globalPosition().toPoint() - frameGeometry().topLeft();
+                    return true;
+                }
+            }
+        } else if (event->type() == QEvent::MouseMove) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (m_isTitleDragging && (me->buttons() & Qt::LeftButton)) {
+                if (isMaximized()) {
+                    showNormal();
+                }
+                move(me->globalPosition().toPoint() - m_dragStartPos);
+                return true;
+            }
+        } else if (event->type() == QEvent::MouseButtonRelease) {
+            m_isTitleDragging = false;
+        } else if (event->type() == QEvent::MouseButtonDblClick) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton) {
+                QWidget *child = m_titleBar->childAt(me->pos());
+                if (!child || qobject_cast<QLabel *>(child)) {
+                    if (isMaximized()) {
+                        showNormal();
+                    } else {
+                        showMaximized();
+                    }
+                    return true;
+                }
+            }
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
 void MainWindow::toggleSidebar(bool show)
 {
-    const int drawerW = 300;
+    const int drawerW = 290;
     const QRect area = m_centralRoot->rect();
     m_sidebarBackdrop->setGeometry(area);
 
@@ -899,15 +1171,21 @@ void MainWindow::toggleSidebar(bool show)
         m_sidebar->show();
         m_sidebar->raise();
 
+        m_headerSettingsBtn->setStyleSheet(QStringLiteral("background: rgba(0, 0, 0, 0.12); color: #0071e3; font-weight: 600;"));
+        m_dockSettingsBtn->setStyleSheet(QStringLiteral("background: #ffffff; color: #111111;"));
+
         auto *anim = new QPropertyAnimation(m_sidebar, "geometry");
-        anim->setDuration(220);
+        anim->setDuration(240);
         anim->setEasingCurve(QEasingCurve::OutCubic);
         anim->setStartValue(QRect(area.width(), 0, drawerW, area.height()));
         anim->setEndValue(QRect(area.width() - drawerW, 0, drawerW, area.height()));
         anim->start(QAbstractAnimation::DeleteWhenStopped);
     } else {
+        m_headerSettingsBtn->setStyleSheet(QString());
+        m_dockSettingsBtn->setStyleSheet(QString());
+
         auto *anim = new QPropertyAnimation(m_sidebar, "geometry");
-        anim->setDuration(180);
+        anim->setDuration(200);
         anim->setEasingCurve(QEasingCurve::InCubic);
         anim->setStartValue(m_sidebar->geometry());
         anim->setEndValue(QRect(area.width(), 0, drawerW, area.height()));
