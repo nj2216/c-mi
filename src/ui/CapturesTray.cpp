@@ -15,7 +15,7 @@ ThumbnailCard::ThumbnailCard(const MediaItem &item, QWidget *parent)
     setFixedSize(56, 56);
     setCursor(Qt::PointingHandCursor);
 
-    m_deleteBtn = new QPushButton(QStringLiteral("✕"), this);
+    m_deleteBtn = new QPushButton(QStringLiteral("X"), this);
     m_deleteBtn->setGeometry(39, -2, 17, 17);
     m_deleteBtn->setStyleSheet(QStringLiteral(
         "QPushButton {"
@@ -84,7 +84,7 @@ void ThumbnailCard::paintEvent(QPaintEvent *)
     // Video badge
     if (m_item.type == MediaItem::Type::Video) {
         p.setClipping(false);
-        QRectF badgeRect(5, 36, 28, 14);
+        QRectF badgeRect(5, 36, 26, 14);
         p.setPen(Qt::NoPen);
         p.setBrush(QColor(0, 0, 0, 190));
         p.drawRoundedRect(badgeRect, 4, 4);
@@ -94,7 +94,7 @@ void ThumbnailCard::paintEvent(QPaintEvent *)
         f.setPixelSize(8);
         f.setBold(true);
         p.setFont(f);
-        p.drawText(badgeRect, Qt::AlignCenter, QStringLiteral("▶ VID"));
+        p.drawText(badgeRect, Qt::AlignCenter, QStringLiteral("VID"));
     }
 
     // Border
@@ -134,7 +134,7 @@ CapturesTray::CapturesTray(QWidget *parent)
     m_countLabel->setStyleSheet(QStringLiteral("color: #ffffff; font-size: 12px; font-weight: 600;"));
     metaLayout->addWidget(m_countLabel);
 
-    m_folderBtn = new QPushButton(QStringLiteral("Save All"), metaWrap);
+    m_folderBtn = new QPushButton(QStringLiteral("Open Folder"), metaWrap);
     m_folderBtn->setToolTip(QStringLiteral("Open captured files folder"));
     m_folderBtn->setCursor(Qt::PointingHandCursor);
     m_folderBtn->setStyleSheet(QStringLiteral(

@@ -48,12 +48,12 @@ void TrayIcon::updateIcon()
         p.setPen(QPen(accent, 2));
         p.setBrush(accent);
         p.drawEllipse(3, 3, 16, 16);
-        setToolTip(QStringLiteral("c~mi — recording"));
+        setToolTip(QStringLiteral("c~mi - recording"));
     } else if (m_inUse) {
         p.setPen(Qt::NoPen);
         p.setBrush(accent);
         p.drawEllipse(6, 6, 10, 10);
-        setToolTip(QStringLiteral("c~mi — camera in use"));
+        setToolTip(QStringLiteral("c~mi - camera in use"));
     } else {
         QColor dim(0x88, 0x88, 0x88);
         p.setPen(QPen(dim, 2));

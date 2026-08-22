@@ -122,7 +122,7 @@ MainWindow::MainWindow(QWidget *parent)
     setAttribute(Qt::WA_TranslucentBackground);
     setMouseTracking(true);
 
-    setWindowTitle(QStringLiteral("Camera Pro"));
+    setWindowTitle(QStringLiteral("C~Mi."));
 
     m_devMgr = new DeviceManager(this);
     m_capture = new CaptureDevice;
@@ -280,19 +280,19 @@ void MainWindow::buildUi()
     controlsLayout->addWidget(m_maxDot);
     titleLayout->addWidget(windowControls, 0, Qt::AlignLeft | Qt::AlignVCenter);
 
-    // Centered Title: 📸 Camera Pro
-    auto *titleLabel = new QLabel(QStringLiteral("📸 Camera Pro"), m_titleBar);
+    // Centered Title: Camera Pro
+    auto *titleLabel = new QLabel(QStringLiteral("Camera Pro"), m_titleBar);
     titleLabel->setAlignment(Qt::AlignCenter);
     titleLabel->setObjectName(QStringLiteral("titleLabel"));
     titleLayout->addWidget(titleLabel, 1, Qt::AlignCenter);
 
-    // Right Action: ⚙ Settings
+    // Right Action: Settings
     auto *titleActions = new QWidget(m_titleBar);
     auto *actionsLayout = new QHBoxLayout(titleActions);
     actionsLayout->setContentsMargins(0, 0, 0, 0);
     actionsLayout->setSpacing(8);
 
-    m_headerSettingsBtn = new QPushButton(QStringLiteral("⚙ Settings"), titleActions);
+    m_headerSettingsBtn = new QPushButton(QStringLiteral("Settings"), titleActions);
     m_headerSettingsBtn->setObjectName(QStringLiteral("headerSettingsBtn"));
     m_headerSettingsBtn->setCursor(Qt::PointingHandCursor);
     connect(m_headerSettingsBtn, &QPushButton::clicked, this, [this] {
@@ -369,7 +369,7 @@ void MainWindow::buildUi()
     emptyLayout->setSpacing(12);
     emptyLayout->setAlignment(Qt::AlignCenter);
 
-    auto *glyph = new QLabel(QStringLiteral("◎"), m_emptyState);
+    auto *glyph = new QLabel(QStringLiteral("[ CAMERA ]"), m_emptyState);
     glyph->setObjectName(QStringLiteral("emptyGlyph"));
     glyph->setAlignment(Qt::AlignCenter);
     emptyLayout->addWidget(glyph);
@@ -450,8 +450,8 @@ void MainWindow::buildUi()
     dockLayout->setSpacing(20);
     dockLayout->setAlignment(Qt::AlignCenter);
 
-    m_switchCamBtn = new QPushButton(QStringLiteral("⟲"), dock);
-    m_switchCamBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_switchCamBtn = new QPushButton(QStringLiteral("Flip"), dock);
+    m_switchCamBtn->setObjectName(QStringLiteral("dockTextBtn"));
     m_switchCamBtn->setToolTip(QStringLiteral("Switch camera"));
     m_switchCamBtn->setCursor(Qt::PointingHandCursor);
     connect(m_switchCamBtn, &QPushButton::clicked, this, [this] {
@@ -464,8 +464,8 @@ void MainWindow::buildUi()
     m_shutterBtn = new ShutterButton(dock);
     connect(m_shutterBtn, &QAbstractButton::clicked, this, &MainWindow::onShutterClicked);
 
-    m_dockSettingsBtn = new QPushButton(QStringLiteral("⚙"), dock);
-    m_dockSettingsBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_dockSettingsBtn = new QPushButton(QStringLiteral("Settings"), dock);
+    m_dockSettingsBtn->setObjectName(QStringLiteral("dockTextBtn"));
     m_dockSettingsBtn->setToolTip(QStringLiteral("Settings"));
     m_dockSettingsBtn->setCursor(Qt::PointingHandCursor);
     connect(m_dockSettingsBtn, &QPushButton::clicked, this, [this] {
@@ -485,6 +485,7 @@ void MainWindow::buildUi()
     m_sidebarBackdrop = new QWidget(m_centralRoot);
     m_sidebarBackdrop->setObjectName(QStringLiteral("sidebarBackdrop"));
     m_sidebarBackdrop->hide();
+    m_sidebarBackdrop->installEventFilter(this);
 
     m_sidebar = new QWidget(m_centralRoot);
     m_sidebar->setObjectName(QStringLiteral("sidebar"));
@@ -500,7 +501,7 @@ void MainWindow::buildUi()
     sbHeaderLayout->setContentsMargins(0, 0, 0, 8);
     auto *sbTitle = new QLabel(QStringLiteral("Camera Settings"), sbHeader);
     sbTitle->setObjectName(QStringLiteral("sidebarHeaderTitle"));
-    auto *closeSbBtn = new QPushButton(QStringLiteral("✕"), sbHeader);
+    auto *closeSbBtn = new QPushButton(QStringLiteral("X"), sbHeader);
     closeSbBtn->setObjectName(QStringLiteral("closeSidebarBtn"));
     closeSbBtn->setCursor(Qt::PointingHandCursor);
     connect(closeSbBtn, &QPushButton::clicked, this, [this] { toggleSidebar(false); });
@@ -536,7 +537,7 @@ void MainWindow::buildUi()
     connect(m_deviceCombo, &QComboBox::currentIndexChanged, this, &MainWindow::onDeviceSelected);
     camSecLayout->addWidget(m_deviceCombo);
 
-    m_deviceStatus = new QLabel(QStringLiteral("● Disconnected"), camSection);
+    m_deviceStatus = new QLabel(QStringLiteral("[ Disconnected ]"), camSection);
     m_deviceStatus->setObjectName(QStringLiteral("deviceStatusPill"));
     camSecLayout->addWidget(m_deviceStatus);
     contentLay->addWidget(camSection);
@@ -888,20 +889,19 @@ QWidget#dock {
     border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 100px;
 }
-QPushButton#dockIconBtn {
-    width: 36px;
+QPushButton#dockTextBtn {
     height: 36px;
-    min-width: 36px;
     min-height: 36px;
-    max-width: 36px;
     max-height: 36px;
     border-radius: 18px;
     border: none;
     background: rgba(255, 255, 255, 0.12);
     color: #ffffff;
-    font-size: 15px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 0 14px;
 }
-QPushButton#dockIconBtn:hover {
+QPushButton#dockTextBtn:hover {
     background: rgba(255, 255, 255, 0.25);
 }
 QWidget#sidebarBackdrop {
@@ -1119,6 +1119,13 @@ void MainWindow::mouseReleaseEvent(QMouseEvent *event)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_sidebarBackdrop) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            toggleSidebar(false);
+            return true;
+        }
+    }
+
     if (watched == m_titleBar) {
         if (event->type() == QEvent::MouseButtonPress) {
             auto *me = static_cast<QMouseEvent *>(event);
@@ -1216,14 +1223,14 @@ void MainWindow::onDevicesChanged()
     m_deviceCombo->blockSignals(true);
     m_deviceCombo->clear();
     for (const DeviceInfo &d : m_devMgr->devices()) {
-        m_deviceCombo->addItem(QStringLiteral("%1 — %2").arg(d.node, d.name), d.node);
+        m_deviceCombo->addItem(QStringLiteral("%1 - %2").arg(d.node, d.name), d.node);
     }
     m_deviceCombo->blockSignals(false);
 
     if (m_deviceCombo->count() == 0) {
         closeDevice();
         m_emptyState->show();
-        m_deviceStatus->setText(QStringLiteral("● Disconnected"));
+        m_deviceStatus->setText(QStringLiteral("[ Disconnected ]"));
         m_deviceStatus->setStyleSheet(QStringLiteral("color: #ff3b30; font-size: 11px; font-weight: 600;"));
         m_hudStatus->setText(QStringLiteral("No Signal"));
         return;
@@ -1257,7 +1264,7 @@ void MainWindow::openDevice(const QString &node)
                                Q_RETURN_ARG(bool, opened), Q_ARG(QString, node));
     if (!opened) {
         m_emptyState->show();
-        m_deviceStatus->setText(QStringLiteral("● Connection Error"));
+        m_deviceStatus->setText(QStringLiteral("[ Connection Error ]"));
         m_deviceStatus->setStyleSheet(QStringLiteral("color: #ff3b30; font-size: 11px; font-weight: 600;"));
         m_hudStatus->setText(QStringLiteral("Failed to open"));
         return;
@@ -1273,7 +1280,7 @@ void MainWindow::openDevice(const QString &node)
                                Q_ARG(QSize, desired), Q_ARG(uint32_t, 0));
     if (!started) {
         m_emptyState->show();
-        m_deviceStatus->setText(QStringLiteral("● Stream Error"));
+        m_deviceStatus->setText(QStringLiteral("[ Stream Error ]"));
         m_deviceStatus->setStyleSheet(QStringLiteral("color: #ff3b30; font-size: 11px; font-weight: 600;"));
         m_hudStatus->setText(QStringLiteral("Stream error"));
         m_controls->close();
@@ -1283,7 +1290,7 @@ void MainWindow::openDevice(const QString &node)
 
     m_grabTimer->start();
     m_emptyState->hide();
-    m_deviceStatus->setText(QStringLiteral("● Connected"));
+    m_deviceStatus->setText(QStringLiteral("[ Connected ]"));
     m_deviceStatus->setStyleSheet(QStringLiteral("color: #34c759; font-size: 11px; font-weight: 600;"));
 
     // Preset binding
@@ -1312,7 +1319,7 @@ void MainWindow::closeDevice()
     m_sliders->clear();
     m_currentDeviceKey.clear();
     m_emptyState->show();
-    m_deviceStatus->setText(QStringLiteral("● Disconnected"));
+    m_deviceStatus->setText(QStringLiteral("[ Disconnected ]"));
     m_deviceStatus->setStyleSheet(QStringLiteral("color: #86868b; font-size: 11px; font-weight: 600;"));
     updateTrayState();
 }

@@ -155,7 +155,7 @@ void PreviewModal::showItem(const MediaItem &item)
             m_imageLabel->setText(QStringLiteral("Unable to load image"));
         }
     } else {
-        m_imageLabel->setText(QStringLiteral("▶ Video File: %1\nClick 'Open' to play with system default player.")
+        m_imageLabel->setText(QStringLiteral("Video File: %1\nClick 'Open' to play with system default player.")
             .arg(fi.fileName()));
         m_imageLabel->setStyleSheet(QStringLiteral("background: #050506; border-radius: 10px; color: #ffffff; font-size: 14px; font-weight: 600; text-align: center;"));
     }
