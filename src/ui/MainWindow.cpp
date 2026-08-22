@@ -600,6 +600,35 @@ void MainWindow::buildUi()
     qLayout->addWidget(m_qualitySegment);
     contentLay->addWidget(qSection);
 
+    // Noise Reduction Section
+    auto *nrSection = new QWidget(sidebarContent);
+    auto *nrLayout = new QVBoxLayout(nrSection);
+    nrLayout->setContentsMargins(0, 0, 0, 0);
+    nrLayout->setSpacing(6);
+    auto *nrLbl = new QLabel(QStringLiteral("NOISE REDUCTION"), nrSection);
+    nrLbl->setObjectName(QStringLiteral("fieldLabel"));
+    nrLayout->addWidget(nrLbl);
+    m_denoiseSegment = new SegmentedControl(nrSection);
+    m_denoiseSegment->addSegment(QStringLiteral("Off"), 0);
+    m_denoiseSegment->addSegment(QStringLiteral("Low"), 1);
+    m_denoiseSegment->addSegment(QStringLiteral("Med"), 2);
+    m_denoiseSegment->addSegment(QStringLiteral("High"), 3);
+
+    QSettings settings(QStringLiteral("c-mi"), QStringLiteral("c-mi"));
+    int savedDenoise = settings.value(QStringLiteral("denoiseLevel"), 0).toInt();
+    m_denoiseLevel = std::clamp(savedDenoise, 0, 3);
+    m_denoiseSegment->setCurrentIndex(m_denoiseLevel);
+    m_preview->setDenoiseLevel(m_denoiseLevel);
+
+    connect(m_denoiseSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
+        m_denoiseLevel = v.toInt();
+        m_preview->setDenoiseLevel(m_denoiseLevel);
+        QSettings s(QStringLiteral("c-mi"), QStringLiteral("c-mi"));
+        s.setValue(QStringLiteral("denoiseLevel"), m_denoiseLevel);
+    });
+    nrLayout->addWidget(m_denoiseSegment);
+    contentLay->addWidget(nrSection);
+
     // Color Filters Section (3x3 Swatch Grid)
     auto *fxSection = new QWidget(sidebarContent);
     auto *fxLayout = new QVBoxLayout(fxSection);

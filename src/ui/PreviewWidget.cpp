@@ -10,6 +10,8 @@ extern "C" {
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <vector>
+#include <thread>
 
 namespace cmi {
 
@@ -35,6 +37,7 @@ uniform bool uMirror;
 uniform int uFilter; // 0=None, 1=Mono, 2=Sepia, 3=Cool, 4=Warm, 5=Cyber, 6=Noir, 7=Vintage, 8=Invert
 uniform bool uShowGrid;
 uniform float uFlashIntensity;
+uniform int uDenoiseLevel; // 0=Off, 1=Low, 2=Medium, 3=High
 
 vec3 rgb2hsv(vec3 c) {
     vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
@@ -56,6 +59,50 @@ vec3 adjustHueSat(vec3 col, float hueShiftDeg, float satScale) {
     hsv.x = fract(hsv.x + hueShiftDeg / 360.0);
     hsv.y = clamp(hsv.y * satScale, 0.0, 1.0);
     return hsv2rgb(hsv);
+}
+
+vec3 applyBilateralFilter(sampler2D tex, vec2 uv, vec2 imgSize, int level) {
+    vec3 center = texture(tex, uv).rgb;
+    if (level <= 0) return center;
+
+    vec2 texel = 1.0 / max(imgSize, vec2(1.0, 1.0));
+    float spatialSigma = (level == 1) ? 1.0 : ((level == 2) ? 1.5 : 2.0);
+    float colorSigma = (level == 1) ? 0.045 : ((level == 2) ? 0.08 : 0.12);
+    int radius = (level == 1) ? 1 : 2;
+
+    float twoSpatialSigmaSq = 2.0 * spatialSigma * spatialSigma;
+    float twoColorSigmaSq = 2.0 * colorSigma * colorSigma;
+
+    vec3 sumCol = vec3(0.0);
+    float sumWeight = 0.0;
+
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            vec2 sampleCoord = uv + vec2(float(dx), float(dy)) * texel;
+            vec3 sCol = texture(tex, clamp(sampleCoord, 0.0, 1.0)).rgb;
+
+            float dSpatialSq = float(dx * dx + dy * dy);
+            float wSpatial = exp(-dSpatialSq / twoSpatialSigmaSq);
+
+            vec3 dColor = sCol - center;
+            float dColorSq = dot(dColor, dColor);
+            float wColor = exp(-dColorSq / twoColorSigmaSq);
+
+            float w = wSpatial * wColor;
+            sumCol += sCol * w;
+            sumWeight += w;
+        }
+    }
+
+    vec3 denoised = sumCol / max(sumWeight, 0.0001);
+
+    // Adaptive Detail Restoration & Edge Sharpening (Soft-Coring)
+    vec3 diff = center - denoised;
+    float noiseFloor = (level == 1) ? 0.012 : ((level == 2) ? 0.018 : 0.025);
+    vec3 detail = sign(diff) * max(abs(diff) - vec3(noiseFloor), vec3(0.0));
+    vec3 sharpened = denoised + detail * 1.6;
+
+    return clamp(sharpened, 0.0, 1.0);
 }
 
 vec3 applyFilter(vec3 col, int fx) {
@@ -143,7 +190,14 @@ void main() {
         sampleUv.x = 1.0 - sampleUv.x;
     }
 
-    vec4 col = texture(frameTex, clamp(sampleUv, 0.0, 1.0));
+    vec3 rawRgb;
+    if (uDenoiseLevel > 0) {
+        rawRgb = applyBilateralFilter(frameTex, clamp(sampleUv, 0.0, 1.0), uImageSize, uDenoiseLevel);
+    } else {
+        rawRgb = texture(frameTex, clamp(sampleUv, 0.0, 1.0)).rgb;
+    }
+
+    vec4 col = vec4(rawRgb, 1.0);
     col.rgb = applyFilter(col.rgb, uFilter);
 
     if (uShowGrid) {
@@ -220,6 +274,14 @@ void PreviewWidget::setFilter(ColorFilter filter)
 {
     if (m_filter != filter) {
         m_filter = filter;
+        update();
+    }
+}
+
+void PreviewWidget::setDenoiseLevel(int level)
+{
+    if (m_denoiseLevel != level) {
+        m_denoiseLevel = level;
         update();
     }
 }
@@ -331,6 +393,7 @@ void PreviewWidget::paintGL()
     m_program->setUniformValue("uFilter", static_cast<int>(m_filter));
     m_program->setUniformValue("uShowGrid", m_showGrid);
     m_program->setUniformValue("uFlashIntensity", m_flashIntensity);
+    m_program->setUniformValue("uDenoiseLevel", m_denoiseLevel);
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
     m_texture->release();
@@ -371,10 +434,142 @@ QImage PreviewWidget::processedLastFrame() const
     QImage raw = lastRawFrame();
     if (raw.isNull())
         return QImage();
-    return applyEffectsToImage(raw, m_filter, m_mirrored, m_arMode, m_targetQuality);
+    return applyEffectsToImage(raw, m_filter, m_mirrored, m_arMode, m_targetQuality, m_denoiseLevel);
 }
 
-QImage PreviewWidget::applyEffectsToImage(const QImage &src, ColorFilter filter, bool mirror, AspectRatioMode ar, const QSize &targetRes)
+QImage PreviewWidget::applyBilateralFilterCpu(const QImage &src, int level)
+{
+    if (src.isNull() || level <= 0)
+        return src;
+
+    QImage img = src.convertToFormat(QImage::Format_RGBA8888);
+    const int w = img.width();
+    const int h = img.height();
+    if (w < 2 || h < 2)
+        return img;
+
+    const int radius = (level == 1) ? 1 : 2;
+    const float spatialSigma = (level == 1) ? 1.0f : ((level == 2) ? 1.5f : 2.0f);
+    const float colorSigma = (level == 1) ? 12.0f : ((level == 2) ? 20.0f : 30.0f);
+
+    const float twoSpatialSigmaSq = 2.0f * spatialSigma * spatialSigma;
+    const float twoColorSigmaSq = 2.0f * colorSigma * colorSigma;
+
+    // Precalculate spatial weights for (2*radius + 1) x (2*radius + 1)
+    float spatialWeights[5][5];
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            float distSq = static_cast<float>(dx * dx + dy * dy);
+            spatialWeights[dy + radius][dx + radius] = std::exp(-distSq / twoSpatialSigmaSq);
+        }
+    }
+
+    // Precalculate color weight table for color distance squared in [0, 3 * 255 * 255]
+    static constexpr int kMaxDistSq = 195075;
+    std::vector<float> colorWeightLut(kMaxDistSq + 1);
+    for (int dSq = 0; dSq <= kMaxDistSq; ++dSq) {
+        colorWeightLut[dSq] = std::exp(-static_cast<float>(dSq) / twoColorSigmaSq);
+    }
+
+    const float noiseFloor = (level == 1) ? 3.0f : ((level == 2) ? 5.0f : 7.0f);
+    constexpr float kBoost = 1.6f;
+
+    QImage result(w, h, QImage::Format_RGBA8888);
+
+    const int threadCount = std::clamp(static_cast<int>(std::thread::hardware_concurrency()), 1, 8);
+    std::vector<std::thread> workers;
+    workers.reserve(threadCount);
+
+    const int rowsPerThread = (h + threadCount - 1) / threadCount;
+
+    for (int t = 0; t < threadCount; ++t) {
+        int startY = t * rowsPerThread;
+        int endY = std::min(h, startY + rowsPerThread);
+        if (startY >= endY) break;
+
+        workers.emplace_back([&img, &result, &spatialWeights, &colorWeightLut, radius, w, h, startY, endY, noiseFloor]() {
+            for (int y = startY; y < endY; ++y) {
+                const uchar *srcRow = img.constScanLine(y);
+                uchar *dstRow = result.scanLine(y);
+
+                for (int x = 0; x < w; ++x) {
+                    int centerR = srcRow[x * 4 + 0];
+                    int centerG = srcRow[x * 4 + 1];
+                    int centerB = srcRow[x * 4 + 2];
+                    uchar centerA = srcRow[x * 4 + 3];
+
+                    float sumR = 0.0f;
+                    float sumG = 0.0f;
+                    float sumB = 0.0f;
+                    float sumWeight = 0.0f;
+
+                    for (int dy = -radius; dy <= radius; ++dy) {
+                        int ny = std::clamp(y + dy, 0, h - 1);
+                        const uchar *neighborRow = img.constScanLine(ny);
+                        const float *spRow = spatialWeights[dy + radius];
+
+                        for (int dx = -radius; dx <= radius; ++dx) {
+                            int nx = std::clamp(x + dx, 0, w - 1);
+                            int sR = neighborRow[nx * 4 + 0];
+                            int sG = neighborRow[nx * 4 + 1];
+                            int sB = neighborRow[nx * 4 + 2];
+
+                            int dr = sR - centerR;
+                            int dg = sG - centerG;
+                            int db = sB - centerB;
+                            int distSq = dr * dr + dg * dg + db * db;
+                            if (distSq > kMaxDistSq) distSq = kMaxDistSq;
+
+                            float sw = spRow[dx + radius];
+                            float cw = colorWeightLut[distSq];
+                            float weight = sw * cw;
+
+                            sumR += sR * weight;
+                            sumG += sG * weight;
+                            sumB += sB * weight;
+                            sumWeight += weight;
+                        }
+                    }
+
+                    float invW = 1.0f / std::max(sumWeight, 0.0001f);
+                    float denoiseR = sumR * invW;
+                    float denoiseG = sumG * invW;
+                    float denoiseB = sumB * invW;
+
+                    // Detail enhancement with soft coring
+                    float diffR = static_cast<float>(centerR) - denoiseR;
+                    float diffG = static_cast<float>(centerG) - denoiseG;
+                    float diffB = static_cast<float>(centerB) - denoiseB;
+
+                    auto enhanceDetail = [noiseFloor](float d) {
+                        float s = (d >= 0.0f) ? 1.0f : -1.0f;
+                        float mag = std::max(0.0f, std::abs(d) - noiseFloor);
+                        return s * mag * kBoost;
+                    };
+
+                    float sharpR = denoiseR + enhanceDetail(diffR);
+                    float sharpG = denoiseG + enhanceDetail(diffG);
+                    float sharpB = denoiseB + enhanceDetail(diffB);
+
+                    dstRow[x * 4 + 0] = static_cast<uchar>(std::clamp(static_cast<int>(sharpR + 0.5f), 0, 255));
+                    dstRow[x * 4 + 1] = static_cast<uchar>(std::clamp(static_cast<int>(sharpG + 0.5f), 0, 255));
+                    dstRow[x * 4 + 2] = static_cast<uchar>(std::clamp(static_cast<int>(sharpB + 0.5f), 0, 255));
+                    dstRow[x * 4 + 3] = centerA;
+                }
+            }
+        });
+    }
+
+    for (auto &worker : workers) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+
+    return result;
+}
+
+QImage PreviewWidget::applyEffectsToImage(const QImage &src, ColorFilter filter, bool mirror, AspectRatioMode ar, const QSize &targetRes, int denoiseLevel)
 {
     if (src.isNull())
         return QImage();
@@ -416,7 +611,12 @@ QImage PreviewWidget::applyEffectsToImage(const QImage &src, ColorFilter filter,
         img = img.mirrored(true, false);
     }
 
-    // 4. Filter
+    // 4. Denoise
+    if (denoiseLevel > 0) {
+        img = applyBilateralFilterCpu(img, denoiseLevel);
+    }
+
+    // 5. Filter
     if (filter != ColorFilter::None) {
         const int w = img.width();
         const int h = img.height();

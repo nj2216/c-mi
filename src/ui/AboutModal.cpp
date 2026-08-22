@@ -44,7 +44,7 @@ AboutModal::AboutModal(QWidget *parent)
     // Icon Header
     auto *iconLabel = new QLabel(m_dialogBox);
     iconLabel->setAlignment(Qt::AlignCenter);
-    QPixmap iconPix(QStringLiteral(":/icons/c-mi.svg"));
+    QPixmap iconPix(QStringLiteral(":/icons/c-mi-logo.png"));
     if (iconPix.isNull()) {
         iconPix = QPixmap(QStringLiteral(":/icons/splash.png"));
     }
@@ -56,12 +56,12 @@ AboutModal::AboutModal(QWidget *parent)
     boxLayout->addWidget(iconLabel, 0, Qt::AlignCenter);
 
     // App Name & Tagline
-    auto *title = new QLabel(QStringLiteral("Camera Pro"), m_dialogBox);
+    auto *title = new QLabel(QStringLiteral("C~Mi"), m_dialogBox);
     title->setAlignment(Qt::AlignCenter);
     title->setStyleSheet(QStringLiteral("color: #ffffff; font-size: 18px; font-weight: 700; letter-spacing: 0.02em;"));
     boxLayout->addWidget(title, 0, Qt::AlignCenter);
 
-    auto *tagline = new QLabel(QStringLiteral("c~mi — See It. Make It."), m_dialogBox);
+    auto *tagline = new QLabel(QStringLiteral("See It. Make It."), m_dialogBox);
     tagline->setAlignment(Qt::AlignCenter);
     tagline->setStyleSheet(QStringLiteral("color: #0071e3; font-size: 12px; font-weight: 600;"));
     boxLayout->addWidget(tagline, 0, Qt::AlignCenter);
@@ -104,6 +104,7 @@ AboutModal::AboutModal(QWidget *parent)
         cardLayout->addLayout(row);
     };
 
+    addDetailRow(QStringLiteral("Author"), QStringLiteral("Jeevan N"));
     addDetailRow(QStringLiteral("Framework"), QStringLiteral("C++17 / Qt6 Widgets"));
     addDetailRow(QStringLiteral("Video Capture"), QStringLiteral("Raw V4L2 ioctl & mmap ring"));
     addDetailRow(QStringLiteral("Encoding"), QStringLiteral("FFmpeg H.264 & AAC"));

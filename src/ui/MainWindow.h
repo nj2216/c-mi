@@ -155,6 +155,7 @@ private:
     QLabel *m_deviceStatus = nullptr;
     SegmentedControl *m_arSegment = nullptr;
     SegmentedControl *m_qualitySegment = nullptr;
+    SegmentedControl *m_denoiseSegment = nullptr;
     SegmentedControl *m_timerSegment = nullptr;
     SegmentedControl *m_burstSegment = nullptr;
     QButtonGroup *m_fxGroup = nullptr;
@@ -179,6 +180,7 @@ private:
     AppMode m_appMode = AppMode::Photo;
     bool m_recording = false;
     QString m_currentDeviceKey;
+    int m_denoiseLevel = 0;
     int m_timerDuration = 0; // seconds (0, 3, 5, 10)
     int m_burstCount = 1;    // 1, 3, 5
     int m_burstRemaining = 0;

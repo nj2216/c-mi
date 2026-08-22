@@ -61,6 +61,9 @@ public:
 
     void triggerFlash();
 
+    void setDenoiseLevel(int level);
+    int denoiseLevel() const { return m_denoiseLevel; }
+
     void setQualityResolution(const QSize &targetRes);
     QSize qualityResolution() const { return m_targetQuality; }
 
@@ -68,7 +71,7 @@ public:
     QImage lastRawFrame() const;
     bool hasFrame() const;
 
-    static QImage applyEffectsToImage(const QImage &src, ColorFilter filter, bool mirror, AspectRatioMode ar, const QSize &targetRes = QSize());
+    static QImage applyEffectsToImage(const QImage &src, ColorFilter filter, bool mirror, AspectRatioMode ar, const QSize &targetRes = QSize(), int denoiseLevel = 0);
 
 public slots:
     void presentFrame(const uchar *data, int bytes, QSize size, uint32_t pixFmt);
@@ -82,6 +85,7 @@ protected:
 private:
     bool decodeMjpeg(const uchar *data, int bytes, QImage &out);
     static QImage yuyvToRgba(const uchar *data, QSize size);
+    static QImage applyBilateralFilterCpu(const QImage &src, int level);
 
     QOpenGLShaderProgram *m_program = nullptr;
     QOpenGLTexture *m_texture = nullptr;
@@ -97,6 +101,7 @@ private:
     ColorFilter m_filter = ColorFilter::None;
     AspectRatioMode m_arMode = AspectRatioMode::Fit;
     QSize m_targetQuality = QSize(1280, 720);
+    int m_denoiseLevel = 0;
     bool m_mirrored = true;
     bool m_showGrid = false;
     float m_flashIntensity = 0.0f;
