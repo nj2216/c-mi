@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(CMI_STATIC "Statically link Qt and FFmpeg (GL/X11/libc stay dynamic)" OFF)
 
@@ -60,6 +61,14 @@ add_executable(c-mi
     src/ui/PreviewWidget.cpp
     src/ui/ControlSliders.h
     src/ui/ControlSliders.cpp
+    src/ui/ToggleSwitch.h
+    src/ui/ToggleSwitch.cpp
+    src/ui/SegmentedControl.h
+    src/ui/SegmentedControl.cpp
+    src/ui/CapturesTray.h
+    src/ui/CapturesTray.cpp
+    src/ui/PreviewModal.h
+    src/ui/PreviewModal.cpp
     src/ui/TrayIcon.h
     src/ui/TrayIcon.cpp
 )

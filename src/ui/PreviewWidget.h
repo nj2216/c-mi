@@ -8,6 +8,7 @@
 #include <QImage>
 #include <QMutex>
 #include <QSize>
+#include <QTimer>
 
 #include <stdint.h>
 
@@ -18,6 +19,25 @@ struct SwsContext;
 
 namespace cmi {
 
+enum class ColorFilter {
+    None = 0,
+    Grayscale = 1,
+    Sepia = 2,
+    Cool = 3,
+    Warm = 4,
+    Cyber = 5,
+    Noir = 6,
+    Vintage = 7,
+    Invert = 8
+};
+
+enum class AspectRatioMode {
+    Fit = 0,
+    Ratio16_9 = 1,
+    Ratio4_3 = 2,
+    Ratio1_1 = 3
+};
+
 // Renders V4L2 frames as GL textures. MJPEG frames are decoded via
 // libavcodec; YUYV is converted to RGBA on CPU. Decoded frames are staged
 // under a mutex and uploaded once in paintGL to avoid extra copies.
@@ -27,9 +47,27 @@ public:
     explicit PreviewWidget(QWidget *parent = nullptr);
     ~PreviewWidget() override;
 
+    void setFilter(ColorFilter filter);
+    ColorFilter filter() const { return m_filter; }
+
+    void setAspectRatioMode(AspectRatioMode mode);
+    AspectRatioMode aspectRatioMode() const { return m_arMode; }
+
+    void setMirrored(bool mirrored);
+    bool isMirrored() const { return m_mirrored; }
+
+    void setShowGrid(bool show);
+    bool showGrid() const { return m_showGrid; }
+
+    void triggerFlash();
+
+    QImage processedLastFrame() const;
+    QImage lastRawFrame() const;
+    bool hasFrame() const;
+
+    static QImage applyEffectsToImage(const QImage &src, ColorFilter filter, bool mirror, AspectRatioMode ar);
+
 public slots:
-    // data is only valid for the duration of the call; the frame is
-    // decoded/copied into the staging buffer synchronously if accepted.
     void presentFrame(const uchar *data, int bytes, QSize size, uint32_t pixFmt);
     void clearFrame();
 
@@ -53,13 +91,17 @@ private:
     QSize m_frameSize;
     bool m_hasFrame = false;
 
+    ColorFilter m_filter = ColorFilter::None;
+    AspectRatioMode m_arMode = AspectRatioMode::Fit;
+    bool m_mirrored = true;
+    bool m_showGrid = false;
+    float m_flashIntensity = 0.0f;
+    QTimer *m_flashTimer = nullptr;
+
     ::AVCodecContext *m_mjpegCtx = nullptr;
     ::AVFrame *m_mjpegFrame = nullptr;
     ::AVPacket *m_mjpegPkt = nullptr;
     ::SwsContext *m_mjpegSws = nullptr;
-
-public:
-    QImage lastFrame() const;
 };
 
 } // namespace cmi

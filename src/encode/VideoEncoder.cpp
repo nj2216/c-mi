@@ -10,9 +10,38 @@ extern "C" {
 #include <libavdevice/avdevice.h>
 }
 
+#include <cstring>
 #include <thread>
 
 namespace cmi {
+
+namespace {
+// Not every FFmpeg build ships libx264/libopenh264; try known H264 encoders
+// by name first, then fall back to a codec that's always built in so
+// recording still works (at reduced compression efficiency).
+const AVCodec *findVideoEncoder(AVCodecID *outId)
+{
+    static const char *kH264Names[] = {
+        "libx264", "libopenh264", "h264_v4l2m2m", "h264_vaapi", "h264_nvenc",
+    };
+    for (const char *name : kH264Names) {
+        if (const AVCodec *c = avcodec_find_encoder_by_name(name)) {
+            *outId = AV_CODEC_ID_H264;
+            return c;
+        }
+    }
+    if (const AVCodec *c = avcodec_find_encoder(AV_CODEC_ID_H264)) {
+        *outId = AV_CODEC_ID_H264;
+        return c;
+    }
+    if (const AVCodec *c = avcodec_find_encoder(AV_CODEC_ID_MPEG4)) {
+        *outId = AV_CODEC_ID_MPEG4;
+        return c;
+    }
+    *outId = AV_CODEC_ID_NONE;
+    return nullptr;
+}
+} // namespace
 
 VideoEncoder::VideoEncoder(QObject *parent) : QObject(parent) {}
 
@@ -23,9 +52,10 @@ VideoEncoder::~VideoEncoder()
 
 bool VideoEncoder::initVideoStream(QSize size, int fps)
 {
-    const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+    AVCodecID codecId = AV_CODEC_ID_NONE;
+    const AVCodec *codec = findVideoEncoder(&codecId);
     if (!codec) {
-        emit errorOccurred(QStringLiteral("H264 encoder not found"));
+        emit errorOccurred(QStringLiteral("No usable video encoder found (H264/MPEG4)"));
         return false;
     }
 
@@ -43,13 +73,15 @@ bool VideoEncoder::initVideoStream(QSize size, int fps)
     m_videoCtx->framerate = {fps, 1};
     m_videoCtx->pix_fmt = AV_PIX_FMT_YUV420P;
     m_videoCtx->gop_size = fps * 2;
-    av_opt_set(m_videoCtx->priv_data, "preset", "veryfast", 0);
+    if (codec->name && std::strcmp(codec->name, "libx264") == 0)
+        av_opt_set(m_videoCtx->priv_data, "preset", "veryfast", 0);
 
     if (m_fmt->oformat->flags & AVFMT_GLOBALHEADER)
         m_videoCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
     if (avcodec_open2(m_videoCtx, codec, nullptr) < 0) {
-        emit errorOccurred(QStringLiteral("Cannot open H264 codec"));
+        emit errorOccurred(QStringLiteral("Cannot open %1 codec")
+                               .arg(QString::fromUtf8(codec->name ? codec->name : "video")));
         return false;
     }
     avcodec_parameters_from_context(st->codecpar, m_videoCtx);

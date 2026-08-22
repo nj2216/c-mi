@@ -63,7 +63,8 @@ void ControlSliders::rebuild()
     for (const ControlPanel::Control &c : m_panel->controls()) {
         auto *row = new QHBoxLayout;
         auto *label = new QLabel(c.name, this);
-        label->setMinimumWidth(110);
+        label->setStyleSheet(QStringLiteral("color: #1d1d1f; font-size: 11.5px; font-weight: 500;"));
+        label->setMinimumWidth(100);
         row->addWidget(label);
 
         if (c.isBoolean) {
@@ -95,7 +96,8 @@ void ControlSliders::rebuild()
             slider->setSingleStep(c.step);
             slider->setValue(c.value);
             auto *valueLabel = new QLabel(QString::number(c.value), this);
-            valueLabel->setMinimumWidth(44);
+            valueLabel->setStyleSheet(QStringLiteral("color: #86868b; font-size: 11px; font-weight: 600;"));
+            valueLabel->setMinimumWidth(36);
             valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
             row->addWidget(slider, 1);
             row->addWidget(valueLabel);
@@ -112,8 +114,21 @@ void ControlSliders::rebuild()
 
     // Preset controls.
     auto *presetRow = new QHBoxLayout;
-    auto *saveBtn = new QPushButton(QStringLiteral("save preset"), this);
-    auto *loadBtn = new QPushButton(QStringLiteral("load preset"), this);
+    auto *saveBtn = new QPushButton(QStringLiteral("Save Preset"), this);
+    auto *loadBtn = new QPushButton(QStringLiteral("Load Preset"), this);
+    saveBtn->setStyleSheet(QStringLiteral(
+        "QPushButton {"
+        "  background: rgba(0, 0, 0, 0.05);"
+        "  border: 1px solid rgba(0, 0, 0, 0.08);"
+        "  border-radius: 6px;"
+        "  color: #1d1d1f;"
+        "  font-size: 11px;"
+        "  font-weight: 600;"
+        "  padding: 4px 8px;"
+        "}"
+        "QPushButton:hover { background: rgba(0, 0, 0, 0.09); }"
+    ));
+    loadBtn->setStyleSheet(saveBtn->styleSheet());
     presetRow->addWidget(saveBtn);
     presetRow->addWidget(loadBtn);
     m_layout->addLayout(presetRow);

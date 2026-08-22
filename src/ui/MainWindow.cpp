@@ -11,28 +11,109 @@
 
 #include <QApplication>
 #include <QCloseEvent>
+#include <QResizeEvent>
+#include <QKeyEvent>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
 #include <QHBoxLayout>
+#include <QVBoxLayout>
+#include <QGridLayout>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QSettings>
-#include <QSplitter>
+#include <QScrollArea>
 #include <QStandardPaths>
-#include <QVBoxLayout>
+#include <QPainter>
+#include <QPainterPath>
+#include <QDesktopServices>
+#include <QUrl>
 
 #include <linux/videodev2.h>
 
 namespace cmi {
 
+// ---------------- ShutterButton Implementation ----------------
+
+ShutterButton::ShutterButton(QWidget *parent)
+    : QAbstractButton(parent)
+{
+    setFixedSize(58, 58);
+    setCursor(Qt::PointingHandCursor);
+}
+
+void ShutterButton::setMode(Mode mode)
+{
+    if (m_mode != mode) {
+        m_mode = mode;
+        update();
+    }
+}
+
+void ShutterButton::setRecording(bool rec)
+{
+    if (m_recording != rec) {
+        m_recording = rec;
+        update();
+    }
+}
+
+void ShutterButton::enterEvent(QEnterEvent *)
+{
+    m_hovered = true;
+    update();
+}
+
+void ShutterButton::leaveEvent(QEvent *)
+{
+    m_hovered = false;
+    update();
+}
+
+void ShutterButton::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    const qreal w = width();
+    const qreal h = height();
+    const QPointF center(w / 2.0, h / 2.0);
+
+    // Outer ring
+    p.setPen(QPen(QColor(255, 255, 255, m_hovered ? 200 : 120), 3.0));
+    p.setBrush(QColor(255, 255, 255, 30));
+    p.drawEllipse(center, (w / 2.0) - 2.5, (h / 2.0) - 2.5);
+
+    // Inner shape
+    p.setPen(Qt::NoPen);
+    if (m_mode == Mode::Photo) {
+        // White inner circle
+        p.setBrush(isDown() ? QColor(220, 220, 225) : Qt::white);
+        p.drawEllipse(center, 21.0, 21.0);
+    } else {
+        // Video mode
+        if (m_recording) {
+            // Red rounded square
+            p.setBrush(QColor(255, 59, 48)); // #ff3b30
+            QRectF sq(center.x() - 11, center.y() - 11, 22, 22);
+            p.drawRoundedRect(sq, 5, 5);
+        } else {
+            // Red inner circle
+            p.setBrush(isDown() ? QColor(220, 45, 35) : QColor(255, 59, 48));
+            p.drawEllipse(center, 21.0, 21.0);
+        }
+    }
+}
+
+// ---------------- MainWindow Implementation ----------------
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle(QStringLiteral("c~mi"));
+    setWindowTitle(QStringLiteral("Camera Pro — c~mi"));
 
     m_devMgr = new DeviceManager(this);
     m_capture = new CaptureDevice;
@@ -42,6 +123,33 @@ MainWindow::MainWindow(QWidget *parent)
     m_controls = new ControlPanel(this);
     m_encoder = new VideoEncoder(this);
     m_tray = new TrayIcon(this);
+
+    m_countdownTimer = new QTimer(this);
+    m_countdownTimer->setInterval(1000);
+    connect(m_countdownTimer, &QTimer::timeout, this, [this] {
+        m_countdownRemaining--;
+        if (m_countdownRemaining > 0) {
+            m_countdownLabel->setText(QString::number(m_countdownRemaining));
+            playBeepSfx(false);
+        } else {
+            m_countdownTimer->stop();
+            m_countdownLabel->hide();
+            playBeepSfx(true);
+            m_burstRemaining = m_burstCount;
+            doSinglePhotoCapture();
+        }
+    });
+
+    m_recordTimer = new QTimer(this);
+    m_recordTimer->setInterval(500);
+    connect(m_recordTimer, &QTimer::timeout, this, [this] {
+        qint64 secs = m_recordElapsed.elapsed() / 1000;
+        int m = static_cast<int>(secs / 60);
+        int s = static_cast<int>(secs % 60);
+        m_hudStatus->setText(QStringLiteral("REC %1:%2")
+            .arg(m, 2, 10, QLatin1Char('0'))
+            .arg(s, 2, 10, QLatin1Char('0')));
+    });
 
     connect(m_tray, &TrayIcon::showWindowRequested, this, [this] {
         showNormal();
@@ -56,7 +164,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_devMgr, &DeviceManager::devicesChanged,
             this, &MainWindow::onDevicesChanged);
 
-    // Cross-thread wiring: capture thread -> GUI thread.
+    // Capture thread -> GUI thread wiring
     connect(m_capture, &CaptureDevice::frameReady,
             this, &MainWindow::onFrameReady, Qt::QueuedConnection);
     connect(m_capture, &CaptureDevice::errorOccurred,
@@ -65,19 +173,34 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onCaptureError);
     connect(m_encoder, &VideoEncoder::recordingStopped,
             this, [this](const QString &path) {
-        m_statusLabel->setText(QStringLiteral("saved %1").arg(path));
+        m_hudStatus->setText(QStringLiteral("Video Saved"));
+        QTimer::singleShot(2000, this, [this] {
+            if (!m_recording)
+                m_hudStatus->setText(m_appMode == AppMode::Video ? QStringLiteral("Video Ready") : QStringLiteral("Ready"));
+        });
+
+        // Add to captures tray
+        MediaItem item;
+        item.filePath = path;
+        item.type = MediaItem::Type::Video;
+        item.timestamp = QDateTime::currentDateTime();
+        item.thumbnail = m_preview->processedLastFrame();
+        m_capturesTray->addItem(item);
     });
 
     m_grabTimer = new QTimer(this);
-    m_grabTimer->setInterval(8); // ~120 Hz polling; DQBUF blocks only per-frame
+    m_grabTimer->setInterval(8); // ~120 Hz polling
     connect(m_grabTimer, &QTimer::timeout,
             m_capture, &CaptureDevice::grabFrame, Qt::QueuedConnection);
 
     buildUi();
     applyStyle();
 
-    // Populate device list.
+    // Populate initial device list
     onDevicesChanged();
+
+    // Load recent captures from pictures folder into roll
+    m_capturesTray->scanDirectory(captureDir());
 }
 
 MainWindow::~MainWindow()
@@ -85,376 +208,644 @@ MainWindow::~MainWindow()
     closeDevice();
     m_captureThread.quit();
     m_captureThread.wait();
-    delete m_capture; // lives on the now-stopped thread; parent is none
+    delete m_capture;
 }
 
 void MainWindow::buildUi()
 {
-    auto *central = new QWidget(this);
-    central->setObjectName(QStringLiteral("centralRoot"));
-    auto *root = new QVBoxLayout(central);
-    root->setContentsMargins(14, 12, 14, 14);
-    root->setSpacing(10);
+    m_centralRoot = new QWidget(this);
+    m_centralRoot->setObjectName(QStringLiteral("centralRoot"));
+    auto *rootLayout = new QVBoxLayout(m_centralRoot);
+    rootLayout->setContentsMargins(16, 12, 16, 14);
+    rootLayout->setSpacing(10);
 
-    auto *titleBar = new QWidget(central);
+    // 1. Top Titlebar / Chrome
+    auto *titleBar = new QWidget(m_centralRoot);
     titleBar->setObjectName(QStringLiteral("titleBar"));
+    titleBar->setFixedHeight(42);
     auto *titleLayout = new QHBoxLayout(titleBar);
-    titleLayout->setContentsMargins(14, 8, 14, 8);
+    titleLayout->setContentsMargins(14, 0, 14, 0);
 
     auto *windowControls = new QWidget(titleBar);
     auto *controlsLayout = new QHBoxLayout(windowControls);
     controlsLayout->setContentsMargins(0, 0, 0, 0);
-    controlsLayout->setSpacing(8);
+    controlsLayout->setSpacing(7);
     for (const char *color : {"#ff5f57", "#febc2e", "#28c840"}) {
-        auto *dot = new QLabel(titleBar);
-        dot->setObjectName(QStringLiteral("windowControl"));
-        dot->setStyleSheet(QStringLiteral("QLabel#windowControl { background: %1; border-radius: 6px; min-width: 12px; min-height: 12px; max-width: 12px; max-height: 12px; }")
-                                .arg(QString::fromLatin1(color)));
+        auto *dot = new QLabel(windowControls);
+        dot->setStyleSheet(QStringLiteral("background: %1; border-radius: 6px; min-width: 12px; min-height: 12px; max-width: 12px; max-height: 12px; border: 1px solid rgba(0,0,0,0.1);").arg(QString::fromLatin1(color)));
         controlsLayout->addWidget(dot);
     }
     titleLayout->addWidget(windowControls);
 
-    auto *titleLabel = new QLabel(QStringLiteral("Camera Pro"), titleBar);
+    auto *titleLabel = new QLabel(QStringLiteral("📸 Camera Pro"), titleBar);
     titleLabel->setAlignment(Qt::AlignCenter);
     titleLabel->setObjectName(QStringLiteral("titleLabel"));
     titleLayout->addWidget(titleLabel, 1);
 
-    auto *navButtons = new QWidget(titleBar);
-    auto *navLayout = new QHBoxLayout(navButtons);
-    navLayout->setContentsMargins(0, 0, 0, 0);
-    navLayout->setSpacing(6);
+    m_headerSettingsBtn = new QPushButton(QStringLiteral("⚙ Settings"), titleBar);
+    m_headerSettingsBtn->setObjectName(QStringLiteral("headerSettingsBtn"));
+    m_headerSettingsBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_headerSettingsBtn, &QPushButton::clicked, this, [this] {
+        toggleSidebar(m_sidebar->isHidden());
+    });
+    titleLayout->addWidget(m_headerSettingsBtn);
 
-    auto *homeBtn = new QPushButton(QStringLiteral("⌂"), titleBar);
-    homeBtn->setObjectName(QStringLiteral("navButton"));
-    auto *settingsBtn = new QPushButton(QStringLiteral("⚙"), titleBar);
-    settingsBtn->setObjectName(QStringLiteral("navButton"));
-    navLayout->addWidget(homeBtn);
-    navLayout->addWidget(settingsBtn);
-    titleLayout->addWidget(navButtons);
-    root->addWidget(titleBar);
+    rootLayout->addWidget(titleBar);
 
-    auto *content = new QWidget(central);
-    content->setObjectName(QStringLiteral("contentArea"));
-    auto *contentLayout = new QHBoxLayout(content);
-    contentLayout->setContentsMargins(0, 0, 0, 0);
-    contentLayout->setSpacing(12);
-
-    auto *stage = new QWidget(content);
+    // 2. Stage (Main Viewport & Filmstrip Tray)
+    auto *stage = new QWidget(m_centralRoot);
     stage->setObjectName(QStringLiteral("stage"));
     auto *stageLayout = new QVBoxLayout(stage);
-    stageLayout->setContentsMargins(12, 12, 12, 12);
+    stageLayout->setContentsMargins(14, 14, 14, 10);
     stageLayout->setSpacing(10);
 
-    m_onAirLabel = new QLabel(QStringLiteral("LIVE"), stage);
-    m_onAirLabel->setObjectName(QStringLiteral("onAir"));
-    m_onAirLabel->setAlignment(Qt::AlignCenter);
-    m_onAirLabel->hide();
-    stageLayout->addWidget(m_onAirLabel, 0, Qt::AlignHCenter);
+    // Frame Container holding OpenGL Preview, HUD pill, Countdown overlay, Empty state
+    auto *frameContainer = new QWidget(stage);
+    frameContainer->setObjectName(QStringLiteral("frameContainer"));
+    auto *frameLayout = new QGridLayout(frameContainer);
+    frameLayout->setContentsMargins(0, 0, 0, 0);
 
-    m_preview = new PreviewWidget(stage);
-    m_preview->setObjectName(QStringLiteral("previewPanel"));
-    stageLayout->addWidget(m_preview, 1);
+    m_preview = new PreviewWidget(frameContainer);
+    m_preview->setObjectName(QStringLiteral("previewWidget"));
+    frameLayout->addWidget(m_preview, 0, 0);
 
-    m_statusLabel = new QLabel(QStringLiteral("idle"), stage);
-    m_statusLabel->setObjectName(QStringLiteral("status"));
-    m_statusLabel->setAlignment(Qt::AlignCenter);
-    stageLayout->addWidget(m_statusLabel);
+    // Floating HUD Top Pill
+    auto *topPill = new QWidget(frameContainer);
+    topPill->setObjectName(QStringLiteral("topPill"));
+    topPill->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    auto *pillLayout = new QHBoxLayout(topPill);
+    pillLayout->setContentsMargins(14, 5, 14, 5);
+    pillLayout->setSpacing(8);
 
-    auto *floatingActions = new QWidget(stage);
-    floatingActions->setObjectName(QStringLiteral("floatingActions"));
-    floatingActions->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    auto *floatingLayout = new QHBoxLayout(floatingActions);
-    floatingLayout->setContentsMargins(0, 0, 0, 0);
-    floatingLayout->setSpacing(10);
-    floatingLayout->setAlignment(Qt::AlignCenter);
+    m_recDot = new QLabel(topPill);
+    m_recDot->setFixedSize(8, 8);
+    m_recDot->setStyleSheet(QStringLiteral("background: #ff3b30; border-radius: 4px;"));
+    m_recDot->hide();
+    pillLayout->addWidget(m_recDot);
 
-    auto *swapBtn = new QPushButton(QStringLiteral("⇄"), stage);
-    swapBtn->setObjectName(QStringLiteral("floatingAction"));
-    auto *gridBtn = new QPushButton(QStringLiteral("▦"), stage);
-    gridBtn->setObjectName(QStringLiteral("floatingAction"));
-    floatingLayout->addWidget(swapBtn);
-    floatingLayout->addWidget(gridBtn);
-    stageLayout->addWidget(floatingActions, 0, Qt::AlignBottom | Qt::AlignHCenter);
+    m_hudStatus = new QLabel(QStringLiteral("Standby"), topPill);
+    m_hudStatus->setObjectName(QStringLiteral("hudStatusText"));
+    pillLayout->addWidget(m_hudStatus);
 
-    auto *shutterBtn = new QPushButton(stage);
-    shutterBtn->setObjectName(QStringLiteral("shutterButton"));
-    shutterBtn->setText(QStringLiteral(""));
-    shutterBtn->setCursor(Qt::PointingHandCursor);
-    connect(shutterBtn, &QPushButton::clicked, this, &MainWindow::onPhoto);
-    stageLayout->addWidget(shutterBtn, 0, Qt::AlignCenter);
+    auto *topPillAligner = new QWidget(frameContainer);
+    topPillAligner->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    auto *pillAlignLayout = new QVBoxLayout(topPillAligner);
+    pillAlignLayout->setContentsMargins(0, 12, 0, 0);
+    pillAlignLayout->addWidget(topPill, 0, Qt::AlignHCenter | Qt::AlignTop);
+    pillAlignLayout->addStretch();
+    frameLayout->addWidget(topPillAligner, 0, 0);
 
-    auto *drawerBackdrop = new QWidget(central);
-    drawerBackdrop->setObjectName(QStringLiteral("drawerBackdrop"));
-    drawerBackdrop->hide();
-    auto *drawer = new QWidget(central);
-    drawer->setObjectName(QStringLiteral("drawer"));
-    drawer->hide();
-    drawer->setAttribute(Qt::WA_StyledBackground, true);
+    // Big Countdown Label
+    m_countdownLabel = new QLabel(QStringLiteral("3"), frameContainer);
+    m_countdownLabel->setObjectName(QStringLiteral("countdownLabel"));
+    m_countdownLabel->setAlignment(Qt::AlignCenter);
+    m_countdownLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_countdownLabel->hide();
+    frameLayout->addWidget(m_countdownLabel, 0, 0, Qt::AlignCenter);
 
-    auto *drawerLayout = new QVBoxLayout(drawer);
-    drawerLayout->setContentsMargins(16, 16, 16, 16);
-    drawerLayout->setSpacing(10);
+    // Empty State Widget
+    m_emptyState = new QWidget(frameContainer);
+    m_emptyState->setObjectName(QStringLiteral("emptyState"));
+    auto *emptyLayout = new QVBoxLayout(m_emptyState);
+    emptyLayout->setContentsMargins(20, 20, 20, 20);
+    emptyLayout->setSpacing(12);
+    emptyLayout->setAlignment(Qt::AlignCenter);
 
-    auto *drawerHeader = new QLabel(QStringLiteral("Camera"), drawer);
-    drawerHeader->setObjectName(QStringLiteral("sectionTitle"));
-    drawerLayout->addWidget(drawerHeader);
+    auto *glyph = new QLabel(QStringLiteral("◎"), m_emptyState);
+    glyph->setObjectName(QStringLiteral("emptyGlyph"));
+    glyph->setAlignment(Qt::AlignCenter);
+    emptyLayout->addWidget(glyph);
 
-    auto *deviceLabel = new QLabel(QStringLiteral("device"), drawer);
-    deviceLabel->setObjectName(QStringLiteral("fieldLabel"));
-    drawerLayout->addWidget(deviceLabel);
-    m_deviceCombo = new QComboBox(drawer);
-    connect(m_deviceCombo, &QComboBox::currentIndexChanged,
-            this, &MainWindow::onDeviceSelected);
-    drawerLayout->addWidget(m_deviceCombo);
+    auto *msg = new QLabel(QStringLiteral("Enable camera permissions to preview and capture photos & video."), m_emptyState);
+    msg->setObjectName(QStringLiteral("emptyMsg"));
+    msg->setAlignment(Qt::AlignCenter);
+    msg->setWordWrap(true);
+    msg->setMaximumWidth(320);
+    emptyLayout->addWidget(msg);
 
-    auto *fmtLabel = new QLabel(QStringLiteral("format"), drawer);
-    fmtLabel->setObjectName(QStringLiteral("fieldLabel"));
-    drawerLayout->addWidget(fmtLabel);
-    m_formatCombo = new QComboBox(drawer);
-    drawerLayout->addWidget(m_formatCombo);
+    auto *initBtn = new QPushButton(QStringLiteral("Turn On Camera"), m_emptyState);
+    initBtn->setObjectName(QStringLiteral("initBtn"));
+    initBtn->setCursor(Qt::PointingHandCursor);
+    connect(initBtn, &QPushButton::clicked, this, &MainWindow::onDevicesChanged);
+    emptyLayout->addWidget(initBtn, 0, Qt::AlignCenter);
 
-    auto *resLabel = new QLabel(QStringLiteral("resolution"), drawer);
-    resLabel->setObjectName(QStringLiteral("fieldLabel"));
-    drawerLayout->addWidget(resLabel);
-    m_resolutionCombo = new QComboBox(drawer);
-    m_resolutionCombo->addItem(QStringLiteral("640x480"), QSize(640, 480));
-    m_resolutionCombo->addItem(QStringLiteral("1280x720"), QSize(1280, 720));
-    m_resolutionCombo->addItem(QStringLiteral("1920x1080"), QSize(1920, 1080));
-    m_resolutionCombo->setCurrentIndex(1);
-    connect(m_resolutionCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+    frameLayout->addWidget(m_emptyState, 0, 0);
+
+    stageLayout->addWidget(frameContainer, 1);
+
+    // Horizontal Captures Tray (Apple Photo Booth style)
+    m_capturesTray = new CapturesTray(stage);
+    connect(m_capturesTray, &CapturesTray::itemClicked, this, [this](const MediaItem &item) {
+        m_previewModal->showItem(item);
+    });
+    connect(m_capturesTray, &CapturesTray::itemDeleteRequested, this, &MainWindow::onCaptureItemDeleted);
+    connect(m_capturesTray, &CapturesTray::openFolderRequested, this, [this] {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(captureDir()));
+    });
+    stageLayout->addWidget(m_capturesTray);
+
+    rootLayout->addWidget(stage, 1);
+
+    // 3. Bottom Dock
+    auto *dockWrap = new QWidget(m_centralRoot);
+    dockWrap->setObjectName(QStringLiteral("dockWrap"));
+    auto *dockWrapLayout = new QVBoxLayout(dockWrap);
+    dockWrapLayout->setContentsMargins(0, 4, 0, 2);
+    dockWrapLayout->setSpacing(6);
+    dockWrapLayout->setAlignment(Qt::AlignCenter);
+
+    // Mode Selector (PHOTO | VIDEO)
+    auto *modeSelector = new QWidget(dockWrap);
+    modeSelector->setObjectName(QStringLiteral("modeSelector"));
+    auto *modeLayout = new QHBoxLayout(modeSelector);
+    modeLayout->setContentsMargins(0, 0, 0, 0);
+    modeLayout->setSpacing(16);
+    modeLayout->setAlignment(Qt::AlignCenter);
+
+    m_modePhotoBtn = new QPushButton(QStringLiteral("PHOTO"), modeSelector);
+    m_modePhotoBtn->setObjectName(QStringLiteral("modeBtn"));
+    m_modePhotoBtn->setCheckable(true);
+    m_modePhotoBtn->setChecked(true);
+    m_modePhotoBtn->setCursor(Qt::PointingHandCursor);
+
+    m_modeVideoBtn = new QPushButton(QStringLiteral("VIDEO"), modeSelector);
+    m_modeVideoBtn->setObjectName(QStringLiteral("modeBtn"));
+    m_modeVideoBtn->setCheckable(true);
+    m_modeVideoBtn->setCursor(Qt::PointingHandCursor);
+
+    modeLayout->addWidget(m_modePhotoBtn);
+    modeLayout->addWidget(m_modeVideoBtn);
+    dockWrapLayout->addWidget(modeSelector);
+
+    connect(m_modePhotoBtn, &QPushButton::clicked, this, [this] {
+        if (!m_recording) setAppMode(AppMode::Photo);
+    });
+    connect(m_modeVideoBtn, &QPushButton::clicked, this, [this] {
+        if (!m_recording) setAppMode(AppMode::Video);
+    });
+
+    // Floating pill dock
+    auto *dock = new QWidget(dockWrap);
+    dock->setObjectName(QStringLiteral("dock"));
+    auto *dockLayout = new QHBoxLayout(dock);
+    dockLayout->setContentsMargins(18, 5, 18, 5);
+    dockLayout->setSpacing(20);
+    dockLayout->setAlignment(Qt::AlignCenter);
+
+    m_switchCamBtn = new QPushButton(QStringLiteral("⟲"), dock);
+    m_switchCamBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_switchCamBtn->setToolTip(QStringLiteral("Switch Camera"));
+    m_switchCamBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_switchCamBtn, &QPushButton::clicked, this, [this] {
+        if (m_deviceCombo && m_deviceCombo->count() > 1) {
+            int next = (m_deviceCombo->currentIndex() + 1) % m_deviceCombo->count();
+            m_deviceCombo->setCurrentIndex(next);
+        }
+    });
+
+    m_shutterBtn = new ShutterButton(dock);
+    connect(m_shutterBtn, &QAbstractButton::clicked, this, &MainWindow::onShutterClicked);
+
+    m_dockSettingsBtn = new QPushButton(QStringLiteral("⚙"), dock);
+    m_dockSettingsBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_dockSettingsBtn->setToolTip(QStringLiteral("Camera Settings"));
+    m_dockSettingsBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_dockSettingsBtn, &QPushButton::clicked, this, [this] {
+        toggleSidebar(m_sidebar->isHidden());
+    });
+
+    dockLayout->addWidget(m_switchCamBtn);
+    dockLayout->addWidget(m_shutterBtn);
+    dockLayout->addWidget(m_dockSettingsBtn);
+
+    dockWrapLayout->addWidget(dock, 0, Qt::AlignCenter);
+    rootLayout->addWidget(dockWrap);
+
+    // 4. Slide-Out Settings Sidebar & Backdrop
+    m_sidebarBackdrop = new QWidget(m_centralRoot);
+    m_sidebarBackdrop->setObjectName(QStringLiteral("sidebarBackdrop"));
+    m_sidebarBackdrop->hide();
+
+    m_sidebar = new QWidget(m_centralRoot);
+    m_sidebar->setObjectName(QStringLiteral("sidebar"));
+    m_sidebar->hide();
+
+    auto *sidebarLayout = new QVBoxLayout(m_sidebar);
+    sidebarLayout->setContentsMargins(16, 16, 16, 16);
+    sidebarLayout->setSpacing(14);
+
+    // Sidebar Header
+    auto *sbHeader = new QWidget(m_sidebar);
+    auto *sbHeaderLayout = new QHBoxLayout(sbHeader);
+    sbHeaderLayout->setContentsMargins(0, 0, 0, 6);
+    auto *sbTitle = new QLabel(QStringLiteral("Camera Settings"), sbHeader);
+    sbTitle->setObjectName(QStringLiteral("sidebarHeaderTitle"));
+    auto *closeSbBtn = new QPushButton(QStringLiteral("✕"), sbHeader);
+    closeSbBtn->setObjectName(QStringLiteral("closeSidebarBtn"));
+    closeSbBtn->setCursor(Qt::PointingHandCursor);
+    connect(closeSbBtn, &QPushButton::clicked, this, [this] { toggleSidebar(false); });
+    sbHeaderLayout->addWidget(sbTitle);
+    sbHeaderLayout->addStretch();
+    sbHeaderLayout->addWidget(closeSbBtn);
+    sidebarLayout->addWidget(sbHeader);
+
+    auto *sidebarScroll = new QScrollArea(m_sidebar);
+    sidebarScroll->setWidgetResizable(true);
+    sidebarScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    sidebarScroll->setStyleSheet(QStringLiteral(
+        "QScrollArea { background: transparent; border: none; }"
+        "QScrollBar:vertical { width: 4px; background: transparent; }"
+        "QScrollBar::handle:vertical { background: rgba(0, 0, 0, 0.2); border-radius: 2px; }"
+    ));
+
+    auto *sidebarContent = new QWidget(sidebarScroll);
+    sidebarContent->setStyleSheet(QStringLiteral("background: transparent;"));
+    auto *contentLay = new QVBoxLayout(sidebarContent);
+    contentLay->setContentsMargins(0, 0, 0, 0);
+    contentLay->setSpacing(14);
+
+    // Source Camera Section
+    auto *camSection = new QWidget(sidebarContent);
+    auto *camSecLayout = new QVBoxLayout(camSection);
+    camSecLayout->setContentsMargins(0, 0, 0, 0);
+    camSecLayout->setSpacing(6);
+    auto *camLbl = new QLabel(QStringLiteral("SOURCE CAMERA"), camSection);
+    camLbl->setObjectName(QStringLiteral("fieldLabel"));
+    camSecLayout->addWidget(camLbl);
+    m_deviceCombo = new QComboBox(camSection);
+    connect(m_deviceCombo, &QComboBox::currentIndexChanged, this, &MainWindow::onDeviceSelected);
+    camSecLayout->addWidget(m_deviceCombo);
+
+    m_deviceStatus = new QLabel(QStringLiteral("● Disconnected"), camSection);
+    m_deviceStatus->setObjectName(QStringLiteral("deviceStatusPill"));
+    camSecLayout->addWidget(m_deviceStatus);
+    contentLay->addWidget(camSection);
+
+    // Aspect Ratio Section
+    auto *arSection = new QWidget(sidebarContent);
+    auto *arLayout = new QVBoxLayout(arSection);
+    arLayout->setContentsMargins(0, 0, 0, 0);
+    arLayout->setSpacing(6);
+    auto *arLbl = new QLabel(QStringLiteral("ASPECT RATIO"), arSection);
+    arLbl->setObjectName(QStringLiteral("fieldLabel"));
+    arLayout->addWidget(arLbl);
+    m_arSegment = new SegmentedControl(arSection);
+    m_arSegment->addSegment(QStringLiteral("Fit"), static_cast<int>(AspectRatioMode::Fit));
+    m_arSegment->addSegment(QStringLiteral("16:9"), static_cast<int>(AspectRatioMode::Ratio16_9));
+    m_arSegment->addSegment(QStringLiteral("4:3"), static_cast<int>(AspectRatioMode::Ratio4_3));
+    m_arSegment->addSegment(QStringLiteral("1:1"), static_cast<int>(AspectRatioMode::Ratio1_1));
+    connect(m_arSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &d) {
+        m_preview->setAspectRatioMode(static_cast<AspectRatioMode>(d.toInt()));
+    });
+    arLayout->addWidget(m_arSegment);
+    contentLay->addWidget(arSection);
+
+    // Quality Section
+    auto *qSection = new QWidget(sidebarContent);
+    auto *qLayout = new QVBoxLayout(qSection);
+    qLayout->setContentsMargins(0, 0, 0, 0);
+    qLayout->setSpacing(6);
+    auto *qLbl = new QLabel(QStringLiteral("QUALITY"), qSection);
+    qLbl->setObjectName(QStringLiteral("fieldLabel"));
+    qLayout->addWidget(qLbl);
+    m_qualitySegment = new SegmentedControl(qSection);
+    m_qualitySegment->addSegment(QStringLiteral("480p"), QSize(640, 480));
+    m_qualitySegment->addSegment(QStringLiteral("720p"), QSize(1280, 720));
+    m_qualitySegment->addSegment(QStringLiteral("1080p"), QSize(1920, 1080));
+    m_qualitySegment->setCurrentIndex(1);
+    connect(m_qualitySegment, &SegmentedControl::currentIndexChanged, this, [this](int) {
         if (m_capture && m_capture->isOpen() && m_capture->isStreaming())
             openDevice(m_capture->node());
     });
-    drawerLayout->addWidget(m_resolutionCombo);
+    qLayout->addWidget(m_qualitySegment);
+    contentLay->addWidget(qSection);
 
-    auto *btnRow = new QHBoxLayout;
-    btnRow->setSpacing(8);
-    m_photoBtn = new QPushButton(QStringLiteral("Photo"), drawer);
-    m_photoBtn->setObjectName(QStringLiteral("actionButton"));
-    m_recordBtn = new QPushButton(QStringLiteral("Record"), drawer);
-    m_recordBtn->setObjectName(QStringLiteral("actionButton"));
-    m_recordBtn->setCheckable(true);
-    btnRow->addWidget(m_photoBtn);
-    btnRow->addWidget(m_recordBtn);
-    drawerLayout->addLayout(btnRow);
+    // Color Filters Section (3x3 Swatch Grid)
+    auto *fxSection = new QWidget(sidebarContent);
+    auto *fxLayout = new QVBoxLayout(fxSection);
+    fxLayout->setContentsMargins(0, 0, 0, 0);
+    fxLayout->setSpacing(6);
+    auto *fxLbl = new QLabel(QStringLiteral("COLOR FILTERS"), fxSection);
+    fxLbl->setObjectName(QStringLiteral("fieldLabel"));
+    fxLayout->addWidget(fxLbl);
 
-    connect(m_photoBtn, &QPushButton::clicked, this, &MainWindow::onPhoto);
-    connect(m_recordBtn, &QPushButton::clicked, this, &MainWindow::onRecordToggled);
+    auto *swatchGrid = new QWidget(fxSection);
+    auto *gridLay = new QGridLayout(swatchGrid);
+    gridLay->setContentsMargins(0, 0, 0, 0);
+    gridLay->setSpacing(6);
 
-    m_sliders = new ControlSliders(drawer);
-    drawerLayout->addWidget(m_sliders, 1);
+    m_fxGroup = new QButtonGroup(this);
+    m_fxGroup->setExclusive(true);
 
-    contentLayout->addWidget(stage, 1);
-    root->addWidget(content, 1);
-
-    auto *dock = new QWidget(central);
-    dock->setObjectName(QStringLiteral("dock"));
-    auto *dockLayout = new QHBoxLayout(dock);
-    dockLayout->setContentsMargins(10, 6, 10, 6);
-    dockLayout->setSpacing(10);
-
-    auto *modeWrap = new QWidget(dock);
-    auto *modeLayout = new QHBoxLayout(modeWrap);
-    modeLayout->setContentsMargins(0, 0, 0, 0);
-    modeLayout->setSpacing(8);
-
-    auto *photoMode = new QPushButton(QStringLiteral("PHOTO"), dock);
-    photoMode->setCheckable(true);
-    photoMode->setChecked(true);
-    photoMode->setObjectName(QStringLiteral("dockButton"));
-    auto *videoMode = new QPushButton(QStringLiteral("VIDEO"), dock);
-    videoMode->setCheckable(true);
-    videoMode->setObjectName(QStringLiteral("dockButton"));
-    modeLayout->addWidget(photoMode);
-    modeLayout->addWidget(videoMode);
-    dockLayout->addWidget(modeWrap);
-
-    auto *spacer = new QWidget(dock);
-    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    dockLayout->addWidget(spacer);
-
-    auto *dockSettingsBtn = new QPushButton(QStringLiteral("Settings"), dock);
-    dockSettingsBtn->setObjectName(QStringLiteral("dockButton"));
-    dockLayout->addWidget(dockSettingsBtn);
-    root->addWidget(dock);
-
-    auto toggleDrawer = [drawerBackdrop, drawer, central, settingsBtn, dockSettingsBtn](bool open) {
-        const int drawerWidth = 320;
-        const QRect area = central->rect();
-        const QPoint closedPos(area.right() + 8, 0);
-        const QPoint openPos(area.right() - drawerWidth, 0);
-
-        drawerBackdrop->setGeometry(area);
-        drawer->setGeometry(openPos.x(), 0, drawerWidth, area.height());
-
-        if (open) {
-            drawerBackdrop->show();
-            drawer->show();
-            drawerBackdrop->raise();
-            drawer->raise();
-            auto *anim = new QPropertyAnimation(drawer, "pos");
-            anim->setDuration(240);
-            anim->setEasingCurve(QEasingCurve::OutCubic);
-            anim->setStartValue(closedPos);
-            anim->setEndValue(openPos);
-            anim->start(QAbstractAnimation::DeleteWhenStopped);
-            settingsBtn->setChecked(true);
-            dockSettingsBtn->setChecked(true);
-        } else {
-            auto *anim = new QPropertyAnimation(drawer, "pos");
-            anim->setDuration(220);
-            anim->setEasingCurve(QEasingCurve::InCubic);
-            anim->setStartValue(drawer->pos());
-            anim->setEndValue(closedPos);
-            anim->start(QAbstractAnimation::DeleteWhenStopped);
-            QTimer::singleShot(220, drawerBackdrop, [drawerBackdrop, drawer]() {
-                drawerBackdrop->hide();
-                drawer->hide();
-            });
-            settingsBtn->setChecked(false);
-            dockSettingsBtn->setChecked(false);
-        }
+    struct SwatchDef {
+        const char *name;
+        ColorFilter filter;
+        const char *grad;
+    };
+    const SwatchDef swatches[] = {
+        {"None", ColorFilter::None, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #c7c7cc, stop:1 #8e8e93)"},
+        {"Mono", ColorFilter::Grayscale, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6e6e73, stop:1 #1d1d1f)"},
+        {"Sepia", ColorFilter::Sepia, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #c9a06a, stop:1 #8a5a2b)"},
+        {"Cool", ColorFilter::Cool, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #5ac8fa, stop:1 #0071e3)"},
+        {"Warm", ColorFilter::Warm, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ff9f0a, stop:1 #ff375f)"},
+        {"Cyber", ColorFilter::Cyber, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ff007f, stop:1 #00f0ff)"},
+        {"Noir", ColorFilter::Noir, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #000000, stop:1 #434343)"},
+        {"Vintage", ColorFilter::Vintage, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #d4a373, stop:1 #a98467)"},
+        {"Invert", ColorFilter::Invert, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #11998e, stop:1 #38ef7d)"}
     };
 
-    connect(settingsBtn, &QPushButton::clicked, this, [toggleDrawer, drawer]() {
-        toggleDrawer(drawer->isHidden());
-    });
-    connect(dockSettingsBtn, &QPushButton::clicked, this, [toggleDrawer, drawer]() {
-        toggleDrawer(drawer->isHidden());
+    for (int i = 0; i < 9; ++i) {
+        auto *btn = new QPushButton(QString::fromLatin1(swatches[i].name), swatchGrid);
+        btn->setCheckable(true);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setFixedHeight(32);
+        btn->setStyleSheet(QStringLiteral(
+            "QPushButton {"
+            "  background: %1;"
+            "  border: 2px solid transparent;"
+            "  border-radius: 8px;"
+            "  color: #ffffff;"
+            "  font-size: 10px;"
+            "  font-weight: 700;"
+            "}"
+            "QPushButton:checked {"
+            "  border: 2px solid #0071e3;"
+            "}"
+        ).arg(QString::fromLatin1(swatches[i].grad)));
+
+        m_fxGroup->addButton(btn, static_cast<int>(swatches[i].filter));
+        gridLay->addWidget(btn, i / 3, i % 3);
+        if (i == 0) btn->setChecked(true);
+    }
+
+    connect(m_fxGroup, &QButtonGroup::idClicked, this, [this](int id) {
+        m_preview->setFilter(static_cast<ColorFilter>(id));
     });
 
-    drawer->move(central->width() + 8, 0);
-    drawer->hide();
-    drawerBackdrop->hide();
+    fxLayout->addWidget(swatchGrid);
+    contentLay->addWidget(fxSection);
 
-    setCentralWidget(central);
-    resize(1100, 720);
+    // Timer & Burst Section
+    auto *tbSection = new QWidget(sidebarContent);
+    auto *tbLayout = new QVBoxLayout(tbSection);
+    tbLayout->setContentsMargins(0, 0, 0, 0);
+    tbLayout->setSpacing(6);
+    auto *tbLbl = new QLabel(QStringLiteral("TIMER & BURST"), tbSection);
+    tbLbl->setObjectName(QStringLiteral("fieldLabel"));
+    tbLayout->addWidget(tbLbl);
+
+    m_timerSegment = new SegmentedControl(tbSection);
+    m_timerSegment->addSegment(QStringLiteral("Off"), 0);
+    m_timerSegment->addSegment(QStringLiteral("3s"), 3);
+    m_timerSegment->addSegment(QStringLiteral("5s"), 5);
+    m_timerSegment->addSegment(QStringLiteral("10s"), 10);
+    connect(m_timerSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
+        m_timerDuration = v.toInt();
+    });
+    tbLayout->addWidget(m_timerSegment);
+
+    m_burstSegment = new SegmentedControl(tbSection);
+    m_burstSegment->addSegment(QStringLiteral("1x Shot"), 1);
+    m_burstSegment->addSegment(QStringLiteral("3x Burst"), 3);
+    m_burstSegment->addSegment(QStringLiteral("5x Burst"), 5);
+    connect(m_burstSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
+        m_burstCount = v.toInt();
+    });
+    tbLayout->addWidget(m_burstSegment);
+    contentLay->addWidget(tbSection);
+
+    // Toggles Section
+    auto *togglesSection = new QWidget(sidebarContent);
+    auto *togglesLayout = new QVBoxLayout(togglesSection);
+    togglesLayout->setContentsMargins(0, 0, 0, 0);
+    togglesLayout->setSpacing(8);
+    auto *togLbl = new QLabel(QStringLiteral("TOGGLES"), togglesSection);
+    togLbl->setObjectName(QStringLiteral("fieldLabel"));
+    togglesLayout->addWidget(togLbl);
+
+    auto addToggleRow = [&](const QString &label, ToggleSwitch *&sw, bool defaultChecked, auto callback) {
+        auto *row = new QWidget(togglesSection);
+        auto *rowLay = new QHBoxLayout(row);
+        rowLay->setContentsMargins(0, 0, 0, 0);
+        auto *name = new QLabel(label, row);
+        name->setStyleSheet(QStringLiteral("color: #1d1d1f; font-size: 12px; font-weight: 500;"));
+        sw = new ToggleSwitch(row);
+        sw->setChecked(defaultChecked);
+        connect(sw, &QAbstractButton::toggled, this, callback);
+        rowLay->addWidget(name);
+        rowLay->addStretch();
+        rowLay->addWidget(sw);
+        togglesLayout->addWidget(row);
+    };
+
+    addToggleRow(QStringLiteral("Grid Guide"), m_gridToggle, false, [this](bool on) {
+        m_preview->setShowGrid(on);
+    });
+    addToggleRow(QStringLiteral("Mirror Mode"), m_mirrorToggle, true, [this](bool on) {
+        m_preview->setMirrored(on);
+    });
+    addToggleRow(QStringLiteral("Flash Effect"), m_flashToggle, true, [this](bool on) {
+        m_flashEnabled = on;
+    });
+    addToggleRow(QStringLiteral("Shutter SFX"), m_soundToggle, true, [this](bool on) {
+        m_soundEnabled = on;
+    });
+    addToggleRow(QStringLiteral("Microphone"), m_micToggle, true, [this](bool on) {
+        m_micEnabled = on;
+    });
+    contentLay->addWidget(togglesSection);
+
+    // V4L2 Hardware Sliders
+    auto *hwSection = new QWidget(sidebarContent);
+    auto *hwLayout = new QVBoxLayout(hwSection);
+    hwLayout->setContentsMargins(0, 0, 0, 0);
+    hwLayout->setSpacing(6);
+    auto *hwLbl = new QLabel(QStringLiteral("DEVICE CONTROLS"), hwSection);
+    hwLbl->setObjectName(QStringLiteral("fieldLabel"));
+    hwLayout->addWidget(hwLbl);
+    m_sliders = new ControlSliders(hwSection);
+    hwLayout->addWidget(m_sliders);
+    contentLay->addWidget(hwSection);
+
+    sidebarScroll->setWidget(sidebarContent);
+    sidebarLayout->addWidget(sidebarScroll, 1);
+
+    // 5. Preview Modal Dialog
+    m_previewModal = new PreviewModal(m_centralRoot);
+    connect(m_previewModal, &PreviewModal::deleteRequested, this, &MainWindow::onCaptureItemDeleted);
+
+    setCentralWidget(m_centralRoot);
+    resize(1120, 760);
+    setMinimumSize(800, 560);
 }
 
 void MainWindow::applyStyle()
 {
     const QString css = QStringLiteral(R"(
 QMainWindow {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #eef0f4, stop:1 #dfe3ea);
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #eef0f3, stop:1 #d8dbe0);
     color: #1d1d1f;
 }
 QWidget#centralRoot {
     background: transparent;
 }
 QWidget#titleBar {
-    background: rgba(255,255,255,0.7);
-    border: 1px solid rgba(0,0,0,0.08);
-    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.65);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px;
 }
 QLabel#titleLabel {
     color: #1d1d1f;
     font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
+    font-weight: 600;
+    letter-spacing: 0.01em;
 }
-QPushButton#navButton {
-    background: rgba(0,0,0,0.04);
+QPushButton#headerSettingsBtn {
+    background: transparent;
     border: none;
-    border-radius: 8px;
-    min-width: 28px;
-    min-height: 28px;
-    color: #1d1d1f;
-}
-QPushButton#navButton:hover {
-    background: rgba(0,0,0,0.08);
-}
-QPushButton#navButton:checked {
-    background: rgba(0,0,0,0.12);
-}
-QWidget#contentArea {
-    background: transparent;
-}
-QWidget#stage {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #15171a, stop:1 #050608);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 20px;
-    box-shadow: inset 0 2px 14px rgba(255,255,255,0.04);
-}
-QWidget#floatingActions {
-    background: transparent;
-    margin-bottom: 16px;
-}
-QPushButton#floatingAction {
-    background: rgba(255,255,255,0.12);
-    border: 1px solid rgba(255,255,255,0.16);
-    border-radius: 50%;
-    color: #ffffff;
-    min-width: 34px;
-    min-height: 34px;
-    max-width: 34px;
-    max-height: 34px;
-}
-QPushButton#shutterButton {
-    background: qradialgradient(cx:0.5, cy:0.5, radius:0.6, fx:0.5, fy:0.5, stop:0 #ffffff, stop:0.3 #ffffff, stop:0.35 #f4f4f4, stop:0.9 #dfe3ea, stop:1 #cfd5dc);
-    border: 4px solid rgba(255,255,255,0.65);
-    border-radius: 50%;
-    min-width: 76px;
-    min-height: 76px;
-    max-width: 76px;
-    max-height: 76px;
-    margin-bottom: 16px;
-    box-shadow: 0 10px 22px rgba(0,0,0,0.28);
-}
-QPushButton#shutterButton:hover {
-    background: qradialgradient(cx:0.5, cy:0.5, radius:0.6, fx:0.5, fy:0.5, stop:0 #ffffff, stop:0.3 #ffffff, stop:0.35 #f2f2f2, stop:0.9 #d9dde3, stop:1 #c7ced6);
-}
-QWidget#drawer {
-    background: rgba(255,255,255,0.78);
-    border-left: 1px solid rgba(0,0,0,0.08);
-    border-top-left-radius: 18px;
-    border-bottom-left-radius: 18px;
-    box-shadow: -10px 0 25px rgba(0,0,0,0.12);
-}
-QWidget#drawerBackdrop {
-    background: rgba(0,0,0,0.18);
-}
-QLabel#sectionTitle {
     color: #1d1d1f;
     font-size: 13px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+QPushButton#headerSettingsBtn:hover {
+    background: rgba(0, 0, 0, 0.06);
+}
+QWidget#stage {
+    background: #0d0d0f;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+QWidget#frameContainer {
+    background: #000000;
+    border-radius: 14px;
+    overflow: hidden;
+}
+QWidget#topPill {
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 100px;
+}
+QLabel#hudStatusText {
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+QLabel#countdownLabel {
+    color: #ffffff;
+    font-size: 110px;
+    font-weight: 800;
+}
+QWidget#emptyState {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #242426, stop:1 #141416);
+    border-radius: 14px;
+}
+QLabel#emptyGlyph {
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 42px;
+}
+QLabel#emptyMsg {
+    color: rgba(255, 255, 255, 0.65);
+    font-size: 13px;
+}
+QPushButton#initBtn {
+    background: #ffffff;
+    color: #1d1d1f;
+    border: none;
+    border-radius: 100px;
+    padding: 8px 22px;
+    font-size: 13px;
+    font-weight: 600;
+}
+QPushButton#initBtn:hover {
+    background: #f2f2f4;
+}
+QWidget#dockWrap {
+    background: transparent;
+}
+QWidget#modeSelector {
+    background: transparent;
+}
+QPushButton#modeBtn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding: 2px 8px;
+}
+QPushButton#modeBtn:checked {
+    color: #ffffff;
+}
+QWidget#dock {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 100px;
+}
+QPushButton#dockIconBtn {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    max-width: 36px;
+    max-height: 36px;
+    border-radius: 18px;
+    border: none;
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    font-size: 16px;
+}
+QPushButton#dockIconBtn:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+QWidget#sidebarBackdrop {
+    background: rgba(0, 0, 0, 0.35);
+}
+QWidget#sidebar {
+    background: rgba(255, 255, 255, 0.94);
+    border-left: 1px solid rgba(0, 0, 0, 0.08);
+}
+QLabel#sidebarHeaderTitle {
+    color: #1d1d1f;
+    font-size: 14px;
     font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+}
+QPushButton#closeSidebarBtn {
+    background: rgba(0, 0, 0, 0.06);
+    border: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    color: #86868b;
+    font-size: 11px;
+}
+QPushButton#closeSidebarBtn:hover {
+    background: rgba(0, 0, 0, 0.12);
+    color: #1d1d1f;
 }
 QLabel#fieldLabel {
-    color: #6a6e74;
-    font-size: 10px;
+    color: #86868b;
+    font-size: 10.5px;
     font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0.06em;
 }
-QLabel#onAir {
-    background: rgba(0,0,0,0.52);
-    color: #ffffff;
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 999px;
-    padding: 6px 12px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-}
-QLabel#status {
-    color: rgba(255,255,255,0.76);
+QLabel#deviceStatusPill {
+    color: #34c759;
     font-size: 11px;
-    padding-bottom: 2px;
-}
-QComboBox,
-QPushButton,
-QCheckBox,
-QSlider {
-    font-family: "SF Pro Display", "Segoe UI", sans-serif;
+    font-weight: 600;
 }
 QComboBox {
-    background: rgba(0,0,0,0.04);
+    background: rgba(0, 0, 0, 0.05);
     color: #1d1d1f;
-    border: 1px solid rgba(0,0,0,0.08);
-    border-radius: 10px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
     padding: 6px 8px;
-    min-height: 30px;
+    min-height: 26px;
 }
 QComboBox QAbstractItemView {
     background: #ffffff;
@@ -462,82 +853,82 @@ QComboBox QAbstractItemView {
     selection-background-color: #0071e3;
     selection-color: #ffffff;
 }
-QPushButton {
-    background: rgba(0,0,0,0.04);
-    color: #1d1d1f;
-    border: 1px solid rgba(0,0,0,0.08);
-    border-radius: 10px;
-    padding: 8px 12px;
-    min-height: 32px;
-}
-QPushButton:hover {
-    background: rgba(0,0,0,0.07);
-}
-QPushButton:checked,
-QPushButton:pressed {
-    background: #0071e3;
-    color: #ffffff;
-    border-color: rgba(0,0,0,0.02);
-}
-QPushButton#actionButton {
-    min-width: 90px;
-}
-QPushButton#dockButton {
-    background: rgba(255,255,255,0.45);
-    border: 1px solid rgba(0,0,0,0.06);
-    border-radius: 999px;
-    min-width: 88px;
-}
-QWidget#dock {
-    background: rgba(17,18,20,0.86);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 18px;
-}
 QSlider::groove:horizontal {
-    background: rgba(0,0,0,0.12);
+    background: rgba(0, 0, 0, 0.12);
     height: 4px;
-    border-radius: 3px;
+    border-radius: 2px;
 }
 QSlider::sub-page:horizontal {
     background: #0071e3;
-    border-radius: 3px;
+    border-radius: 2px;
 }
 QSlider::handle:horizontal {
     background: #ffffff;
     border: 2px solid #0071e3;
     width: 12px;
     height: 12px;
-    margin: -5px 0;
-    border-radius: 8px;
+    margin: -4px 0;
+    border-radius: 6px;
 }
-QSlider::add-page:horizontal {
-    background: rgba(0,0,0,0.12);
-}
-QCheckBox {
-    spacing: 8px;
-}
-QCheckBox::indicator {
-    width: 14px;
-    height: 14px;
-    border-radius: 4px;
-    border: 1px solid rgba(0,0,0,0.15);
-    background: rgba(0,0,0,0.04);
-}
-QCheckBox::indicator:checked {
-    background: #0071e3;
-    border-color: #0071e3;
-}
-QSplitter::handle {
-    background: transparent;
-}
-QToolTip {
-    background: rgba(17,18,20,0.95);
-    color: #ffffff;
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 8px;
-}
-    )" );
+)");
     qApp->setStyleSheet(css);
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    const int drawerW = 300;
+    m_sidebarBackdrop->setGeometry(m_centralRoot->rect());
+    m_previewModal->setGeometry(m_centralRoot->rect());
+    if (!m_sidebar->isHidden()) {
+        m_sidebar->setGeometry(m_centralRoot->width() - drawerW, 0, drawerW, m_centralRoot->height());
+    } else {
+        m_sidebar->setGeometry(m_centralRoot->width(), 0, drawerW, m_centralRoot->height());
+    }
+}
+
+void MainWindow::toggleSidebar(bool show)
+{
+    const int drawerW = 300;
+    const QRect area = m_centralRoot->rect();
+    m_sidebarBackdrop->setGeometry(area);
+
+    if (show) {
+        m_sidebarBackdrop->show();
+        m_sidebarBackdrop->raise();
+        m_sidebar->show();
+        m_sidebar->raise();
+
+        auto *anim = new QPropertyAnimation(m_sidebar, "geometry");
+        anim->setDuration(220);
+        anim->setEasingCurve(QEasingCurve::OutCubic);
+        anim->setStartValue(QRect(area.width(), 0, drawerW, area.height()));
+        anim->setEndValue(QRect(area.width() - drawerW, 0, drawerW, area.height()));
+        anim->start(QAbstractAnimation::DeleteWhenStopped);
+    } else {
+        auto *anim = new QPropertyAnimation(m_sidebar, "geometry");
+        anim->setDuration(180);
+        anim->setEasingCurve(QEasingCurve::InCubic);
+        anim->setStartValue(m_sidebar->geometry());
+        anim->setEndValue(QRect(area.width(), 0, drawerW, area.height()));
+        connect(anim, &QAbstractAnimation::finished, this, [this] {
+            m_sidebar->hide();
+            m_sidebarBackdrop->hide();
+        });
+        anim->start(QAbstractAnimation::DeleteWhenStopped);
+    }
+}
+
+void MainWindow::setAppMode(AppMode mode)
+{
+    m_appMode = mode;
+    m_modePhotoBtn->setChecked(mode == AppMode::Photo);
+    m_modeVideoBtn->setChecked(mode == AppMode::Video);
+    m_shutterBtn->setMode(mode == AppMode::Photo ? ShutterButton::Mode::Photo : ShutterButton::Mode::Video);
+
+    if (m_capture && m_capture->isOpen()) {
+        m_hudStatus->setText(mode == AppMode::Video ? QStringLiteral("Video Ready") : QStringLiteral("Ready"));
+    }
 }
 
 void MainWindow::onDevicesChanged()
@@ -546,27 +937,29 @@ void MainWindow::onDevicesChanged()
 
     m_deviceCombo->blockSignals(true);
     m_deviceCombo->clear();
-    for (const DeviceInfo &d : m_devMgr->devices())
+    for (const DeviceInfo &d : m_devMgr->devices()) {
         m_deviceCombo->addItem(QStringLiteral("%1 — %2").arg(d.node, d.name), d.node);
+    }
     m_deviceCombo->blockSignals(false);
 
     if (m_deviceCombo->count() == 0) {
         closeDevice();
-        m_statusLabel->setText(QStringLiteral("no camera found"));
+        m_emptyState->show();
+        m_deviceStatus->setText(QStringLiteral("● Disconnected"));
+        m_deviceStatus->setStyleSheet(QStringLiteral("color: #ff3b30; font-size: 11px; font-weight: 600;"));
+        m_hudStatus->setText(QStringLiteral("No Signal"));
         return;
     }
 
     int idx = previous.isEmpty() ? 0 : m_deviceCombo->findData(previous);
-    if (idx < 0)
-        idx = 0;
+    if (idx < 0) idx = 0;
     m_deviceCombo->setCurrentIndex(idx);
     onDeviceSelected(idx);
 }
 
 void MainWindow::onDeviceSelected(int index)
 {
-    if (index < 0)
-        return;
+    if (index < 0) return;
     const QString node = m_deviceCombo->itemData(index).toString();
     if (node.isEmpty() || (m_capture->isOpen() && m_capture->node() == node))
         return;
@@ -577,63 +970,72 @@ void MainWindow::openDevice(const QString &node)
 {
     closeDevice();
 
-    if (!m_capture->open(node)) {
-        m_statusLabel->setText(QStringLiteral("failed to open %1").arg(node));
+    // CaptureDevice lives on m_captureThread and grabFrame() is delivered
+    // there via queued connection; calling open/start directly from the GUI
+    // thread would race with in-flight grabFrame() calls (segfault on rapid
+    // resolution/device switches). Route through the same thread instead.
+    bool opened = false;
+    QMetaObject::invokeMethod(m_capture, "open", Qt::BlockingQueuedConnection,
+                               Q_RETURN_ARG(bool, opened), Q_ARG(QString, node));
+    if (!opened) {
+        m_emptyState->show();
+        m_deviceStatus->setText(QStringLiteral("● Connection Error"));
+        m_deviceStatus->setStyleSheet(QStringLiteral("color: #ff3b30; font-size: 11px; font-weight: 600;"));
+        m_hudStatus->setText(QStringLiteral("Failed to open"));
         return;
     }
 
     m_controls->open(node);
 
-    // Formats
-    m_formatCombo->blockSignals(true);
-    m_formatCombo->clear();
-    const auto formats = CaptureDevice::enumFormats(node);
-    for (const auto &f : formats)
-        m_formatCombo->addItem(f.description, static_cast<quint32>(f.pixFmt));
-    m_formatCombo->blockSignals(false);
+    const QSize desired = m_qualitySegment ? m_qualitySegment->currentData().toSize() : QSize(1280, 720);
 
-    const QSize desired = m_resolutionCombo && m_resolutionCombo->count() > 0
-        ? m_resolutionCombo->currentData().toSize()
-        : QSize(1280, 720);
-
-    if (!m_capture->start(desired, 0)) {
-        m_statusLabel->setText(QStringLiteral("failed to start stream"));
+    bool started = false;
+    QMetaObject::invokeMethod(m_capture, "start", Qt::BlockingQueuedConnection,
+                               Q_RETURN_ARG(bool, started),
+                               Q_ARG(QSize, desired), Q_ARG(uint32_t, 0));
+    if (!started) {
+        m_emptyState->show();
+        m_deviceStatus->setText(QStringLiteral("● Stream Error"));
+        m_deviceStatus->setStyleSheet(QStringLiteral("color: #ff3b30; font-size: 11px; font-weight: 600;"));
+        m_hudStatus->setText(QStringLiteral("Stream error"));
         m_controls->close();
-        m_capture->close();
+        QMetaObject::invokeMethod(m_capture, "close", Qt::BlockingQueuedConnection);
         return;
     }
 
     m_grabTimer->start();
+    m_emptyState->hide();
+    m_deviceStatus->setText(QStringLiteral("● Connected"));
+    m_deviceStatus->setStyleSheet(QStringLiteral("color: #34c759; font-size: 11px; font-weight: 600;"));
 
-    // Unique key for presets: use the device node path (stable enough).
+    // Preset binding
     m_currentDeviceKey = QString(node).replace(QLatin1Char('/'), QLatin1Char('_'));
     m_sliders->bind(m_controls, m_currentDeviceKey);
-
-    // Load "default" preset if one exists.
     if (ControlPanel::presets(m_currentDeviceKey).contains(QStringLiteral("default")))
         m_controls->loadPreset(m_currentDeviceKey, QStringLiteral("default"));
 
-    m_onAirLabel->setVisible(true);
-    m_statusLabel->setText(QStringLiteral("open: %1").arg(node));
+    m_hudStatus->setText(m_appMode == AppMode::Video ? QStringLiteral("Video Ready") : QStringLiteral("Ready"));
     updateTrayState();
 }
 
 void MainWindow::closeDevice()
 {
     if (m_recording)
-        onRecordToggled();
+        stopRecording();
 
     m_grabTimer->stop();
     m_preview->clearFrame();
 
     if (m_capture->isOpen()) {
-        m_capture->stop();
-        m_capture->close();
+        QMetaObject::invokeMethod(m_capture, "stop", Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(m_capture, "close", Qt::BlockingQueuedConnection);
     }
     m_controls->close();
     m_sliders->clear();
     m_currentDeviceKey.clear();
-    m_onAirLabel->setVisible(false);
+    m_emptyState->show();
+    m_deviceStatus->setText(QStringLiteral("● Disconnected"));
+    m_deviceStatus->setStyleSheet(QStringLiteral("color: #86868b; font-size: 11px; font-weight: 600;"));
     updateTrayState();
 }
 
@@ -642,71 +1044,145 @@ void MainWindow::onFrameReady(const uchar *data, int bytes, QSize size, uint32_t
     m_preview->presentFrame(data, bytes, size, pixFmt);
 
     if (m_recording) {
-        const QImage frame = m_preview->lastFrame();
+        const QImage frame = m_preview->processedLastFrame();
         if (!frame.isNull())
             m_encoder->writeFrame(frame.constBits(), frame.sizeInBytes(), frame.size());
     }
 }
 
-void MainWindow::onPhoto()
+void MainWindow::onShutterClicked()
 {
-    const QImage frame = m_preview->lastFrame();
+    if (m_appMode == AppMode::Photo) {
+        executePhotoCaptureSequence();
+    } else {
+        if (!m_recording)
+            startRecording();
+        else
+            stopRecording();
+    }
+}
+
+void MainWindow::executePhotoCaptureSequence()
+{
+    if (m_countdownTimer->isActive()) return;
+
+    if (m_timerDuration > 0) {
+        m_countdownRemaining = m_timerDuration;
+        m_countdownLabel->setText(QString::number(m_countdownRemaining));
+        m_countdownLabel->show();
+        playBeepSfx(false);
+        m_countdownTimer->start();
+    } else {
+        m_burstRemaining = m_burstCount;
+        doSinglePhotoCapture();
+    }
+}
+
+void MainWindow::doSinglePhotoCapture()
+{
+    const QImage frame = m_preview->processedLastFrame();
     if (frame.isNull()) {
-        m_statusLabel->setText(QStringLiteral("no frame to capture"));
+        m_hudStatus->setText(QStringLiteral("No frame to capture"));
+        return;
+    }
+
+    if (m_flashEnabled) {
+        m_preview->triggerFlash();
+    }
+
+    playShutterSfx();
+
+    QSettings s(QStringLiteral("c-mi"), QStringLiteral("c-mi"));
+    QString dir = s.value(QStringLiteral("photoDir"), captureDir()).toString();
+    QDir().mkpath(dir);
+
+    const QString name = QDateTime::currentDateTime().toString(QStringLiteral("photo_yyyyMMdd_hhmmss_zzz"));
+    const QString path = QDir(dir).filePath(name + QStringLiteral(".jpg"));
+
+    QString err;
+    if (PhotoEncoder::save(path, frame.constBits(), frame.size(), PhotoEncoder::Format::JPEG, &err)) {
+        m_hudStatus->setText(QStringLiteral("Photo Captured"));
+        QTimer::singleShot(1500, this, [this] {
+            if (!m_recording)
+                m_hudStatus->setText(m_appMode == AppMode::Video ? QStringLiteral("Video Ready") : QStringLiteral("Ready"));
+        });
+
+        // Add to captures tray
+        MediaItem item;
+        item.filePath = path;
+        item.thumbnail = frame;
+        item.type = MediaItem::Type::Photo;
+        item.timestamp = QDateTime::currentDateTime();
+        m_capturesTray->addItem(item);
+    } else {
+        m_hudStatus->setText(QStringLiteral("Photo failed"));
+    }
+
+    m_burstRemaining--;
+    if (m_burstRemaining > 0) {
+        QTimer::singleShot(220, this, &MainWindow::doSinglePhotoCapture);
+    }
+}
+
+void MainWindow::startRecording()
+{
+    if (!m_capture->isStreaming()) {
+        m_hudStatus->setText(QStringLiteral("No active stream"));
         return;
     }
 
     QSettings s(QStringLiteral("c-mi"), QStringLiteral("c-mi"));
-    QString dir = s.value(QStringLiteral("photoDir"), captureDir()).toString();
+    QString dir = s.value(QStringLiteral("videoDir"), captureDir()).toString();
+    QDir().mkpath(dir);
 
-    const QString name = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-hhmmss"));
-    const QString path = QDir(dir).filePath(name + QStringLiteral(".jpg"));
+    const QString name = QDateTime::currentDateTime().toString(QStringLiteral("video_yyyyMMdd_hhmmss"));
+    const QString path = QDir(dir).filePath(name + QStringLiteral(".mp4"));
 
-    QString err;
-    if (PhotoEncoder::save(path, frame.constBits(), frame.size(),
-                           PhotoEncoder::Format::JPEG, &err)) {
-        m_statusLabel->setText(QStringLiteral("photo: %1").arg(path));
-    } else {
-        m_statusLabel->setText(QStringLiteral("photo failed: %1").arg(err));
-    }
-}
-
-void MainWindow::onRecordToggled()
-{
-    if (!m_recording) {
-        if (!m_capture->isStreaming()) {
-            m_statusLabel->setText(QStringLiteral("no active stream"));
-            m_recordBtn->setChecked(false);
-            return;
-        }
-
-        QSettings s(QStringLiteral("c-mi"), QStringLiteral("c-mi"));
-        QString dir = s.value(QStringLiteral("videoDir"), captureDir()).toString();
-        QDir().mkpath(dir);
-
-        const QString name = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-hhmmss"));
-        const QString path = QDir(dir).filePath(name + QStringLiteral(".mp4"));
-
-        const QSize sz = m_capture->frameSize();
-        if (m_encoder->start(path, sz, 30, true)) {
-            m_recording = true;
-            m_recordBtn->setText(QStringLiteral("[ stop ]"));
-            m_statusLabel->setText(QStringLiteral("recording: %1").arg(path));
-        } else {
-            m_recordBtn->setChecked(false);
-        }
-    } else {
-        m_encoder->stop();
-        m_recording = false;
-        m_recordBtn->setText(QStringLiteral("[ record ]"));
-        m_recordBtn->setChecked(false);
+    const QSize sz = m_preview->processedLastFrame().size();
+    if (m_encoder->start(path, sz.isValid() ? sz : m_capture->frameSize(), 30, m_micEnabled)) {
+        m_recording = true;
+        m_shutterBtn->setRecording(true);
+        m_recDot->show();
+        m_recordElapsed.restart();
+        m_recordTimer->start();
+        m_hudStatus->setText(QStringLiteral("REC 00:00"));
     }
     updateTrayState();
 }
 
+void MainWindow::stopRecording()
+{
+    if (!m_recording) return;
+    m_encoder->stop();
+    m_recording = false;
+    m_shutterBtn->setRecording(false);
+    m_recDot->hide();
+    m_recordTimer->stop();
+    playShutterSfx();
+    updateTrayState();
+}
+
+void MainWindow::playShutterSfx()
+{
+    if (!m_soundEnabled) return;
+    QApplication::beep();
+}
+
+void MainWindow::playBeepSfx(bool)
+{
+    if (!m_soundEnabled) return;
+    QApplication::beep();
+}
+
+void MainWindow::onCaptureItemDeleted(const MediaItem &item)
+{
+    QFile::remove(item.filePath);
+    m_capturesTray->removeItem(item.filePath);
+}
+
 void MainWindow::onCaptureError(const QString &message)
 {
-    m_statusLabel->setText(QStringLiteral("error: %1").arg(message));
+    m_hudStatus->setText(QStringLiteral("Error: %1").arg(message));
 }
 
 void MainWindow::updateTrayState()
@@ -733,6 +1209,23 @@ void MainWindow::closeEvent(QCloseEvent *event)
     } else {
         QMainWindow::closeEvent(event);
     }
+}
+
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_Escape) {
+        if (!m_previewModal->isHidden()) {
+            m_previewModal->hideModal();
+        } else if (!m_sidebar->isHidden()) {
+            toggleSidebar(false);
+        }
+        return;
+    }
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        onShutterClicked();
+        return;
+    }
+    QMainWindow::keyPressEvent(event);
 }
 
 } // namespace cmi

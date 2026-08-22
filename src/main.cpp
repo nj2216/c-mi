@@ -5,10 +5,19 @@
 #include <QFileInfo>
 #include <QSettings>
 
+extern "C" {
+#include <libavutil/log.h>
+}
+
 #include "ui/MainWindow.h"
 
 int main(int argc, char *argv[])
 {
+    // FFmpeg logs warnings (e.g. malformed MJPEG APPn markers from some
+    // webcams, deprecated pixel-format notices) on every frame; these are
+    // benign noise for a live preview, so only surface real errors.
+    av_log_set_level(AV_LOG_ERROR);
+
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("c-mi"));
     QApplication::setOrganizationName(QStringLiteral("c-mi"));
@@ -29,20 +38,28 @@ int main(int argc, char *argv[])
             QFontDatabase::addApplicationFont(path);
     }
 
-    // Monospace font throughout; fall back gracefully if the preferred font
-    // is not installed on the system or bundled with the application.
-    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    const QStringList preferred = {QStringLiteral("JetBrains Mono"),
-                                   QStringLiteral("DejaVu Sans Mono"),
-                                   QStringLiteral("Liberation Mono")};
+    // Prefer modern clean sans-serif UI typography; fallback gracefully
+    QFont appFont = QApplication::font();
+    const QStringList preferred = {
+        QStringLiteral("SF Pro Display"),
+        QStringLiteral("SF Pro Text"),
+        QStringLiteral("Inter"),
+        QStringLiteral("Ubuntu"),
+        QStringLiteral("DejaVu Sans"),
+        QStringLiteral("Liberation Sans"),
+        QStringLiteral("Cantarell"),
+        QStringLiteral("Segoe UI"),
+        QStringLiteral("Noto Sans")
+    };
     for (const QString &family : preferred) {
         if (QFontDatabase::hasFamily(family)) {
-            mono = QFont(family);
+            appFont = QFont(family);
             break;
         }
     }
-    mono.setStyleHint(QFont::Monospace);
-    QApplication::setFont(mono);
+    appFont.setStyleHint(QFont::SansSerif);
+    appFont.setPixelSize(13);
+    QApplication::setFont(appFont);
 
     cmi::MainWindow w;
     w.show();
