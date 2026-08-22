@@ -44,6 +44,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libswresample libavdevice)
 
 add_executable(c-mi
+    resources.qrc
     src/main.cpp
     src/v4l2/DeviceManager.h
     src/v4l2/DeviceManager.cpp
@@ -71,6 +72,7 @@ add_executable(c-mi
     src/ui/PreviewModal.cpp
     src/ui/TrayIcon.h
     src/ui/TrayIcon.cpp
+    src/ui/SvgIcons.h
 )
 
 target_include_directories(c-mi PRIVATE

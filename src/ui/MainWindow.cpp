@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "SvgIcons.h"
 
 #include "../v4l2/DeviceManager.h"
 #include "../v4l2/CaptureDevice.h"
@@ -281,7 +282,7 @@ void MainWindow::buildUi()
     titleLayout->addWidget(windowControls, 0, Qt::AlignLeft | Qt::AlignVCenter);
 
     // Centered Title: Camera Pro
-    auto *titleLabel = new QLabel(QStringLiteral("Camera Pro"), m_titleBar);
+    auto *titleLabel = new QLabel(QStringLiteral("C~Mi"), m_titleBar);
     titleLabel->setAlignment(Qt::AlignCenter);
     titleLabel->setObjectName(QStringLiteral("titleLabel"));
     titleLayout->addWidget(titleLabel, 1, Qt::AlignCenter);
@@ -293,6 +294,8 @@ void MainWindow::buildUi()
     actionsLayout->setSpacing(8);
 
     m_headerSettingsBtn = new QPushButton(QStringLiteral("Settings"), titleActions);
+    m_headerSettingsBtn->setIcon(icons::gearIcon(QColor(29, 29, 31), 16));
+    m_headerSettingsBtn->setIconSize(QSize(14, 14));
     m_headerSettingsBtn->setObjectName(QStringLiteral("headerSettingsBtn"));
     m_headerSettingsBtn->setCursor(Qt::PointingHandCursor);
     connect(m_headerSettingsBtn, &QPushButton::clicked, this, [this] {
@@ -369,7 +372,8 @@ void MainWindow::buildUi()
     emptyLayout->setSpacing(12);
     emptyLayout->setAlignment(Qt::AlignCenter);
 
-    auto *glyph = new QLabel(QStringLiteral("[ CAMERA ]"), m_emptyState);
+    auto *glyph = new QLabel(m_emptyState);
+    glyph->setPixmap(icons::cameraGlyph(QColor(255, 255, 255, 180), 54).pixmap(54, 54));
     glyph->setObjectName(QStringLiteral("emptyGlyph"));
     glyph->setAlignment(Qt::AlignCenter);
     emptyLayout->addWidget(glyph);
@@ -450,8 +454,10 @@ void MainWindow::buildUi()
     dockLayout->setSpacing(20);
     dockLayout->setAlignment(Qt::AlignCenter);
 
-    m_switchCamBtn = new QPushButton(QStringLiteral("Flip"), dock);
-    m_switchCamBtn->setObjectName(QStringLiteral("dockTextBtn"));
+    m_switchCamBtn = new QPushButton(dock);
+    m_switchCamBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_switchCamBtn->setIcon(icons::flipIcon(Qt::white, 20));
+    m_switchCamBtn->setIconSize(QSize(18, 18));
     m_switchCamBtn->setToolTip(QStringLiteral("Switch camera"));
     m_switchCamBtn->setCursor(Qt::PointingHandCursor);
     connect(m_switchCamBtn, &QPushButton::clicked, this, [this] {
@@ -464,8 +470,10 @@ void MainWindow::buildUi()
     m_shutterBtn = new ShutterButton(dock);
     connect(m_shutterBtn, &QAbstractButton::clicked, this, &MainWindow::onShutterClicked);
 
-    m_dockSettingsBtn = new QPushButton(QStringLiteral("Settings"), dock);
-    m_dockSettingsBtn->setObjectName(QStringLiteral("dockTextBtn"));
+    m_dockSettingsBtn = new QPushButton(dock);
+    m_dockSettingsBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_dockSettingsBtn->setIcon(icons::gearIcon(Qt::white, 20));
+    m_dockSettingsBtn->setIconSize(QSize(18, 18));
     m_dockSettingsBtn->setToolTip(QStringLiteral("Settings"));
     m_dockSettingsBtn->setCursor(Qt::PointingHandCursor);
     connect(m_dockSettingsBtn, &QPushButton::clicked, this, [this] {
@@ -501,7 +509,9 @@ void MainWindow::buildUi()
     sbHeaderLayout->setContentsMargins(0, 0, 0, 8);
     auto *sbTitle = new QLabel(QStringLiteral("Camera Settings"), sbHeader);
     sbTitle->setObjectName(QStringLiteral("sidebarHeaderTitle"));
-    auto *closeSbBtn = new QPushButton(QStringLiteral("X"), sbHeader);
+    auto *closeSbBtn = new QPushButton(sbHeader);
+    closeSbBtn->setIcon(icons::closeIcon(QColor(134, 134, 139), 12));
+    closeSbBtn->setIconSize(QSize(10, 10));
     closeSbBtn->setObjectName(QStringLiteral("closeSidebarBtn"));
     closeSbBtn->setCursor(Qt::PointingHandCursor);
     connect(closeSbBtn, &QPushButton::clicked, this, [this] { toggleSidebar(false); });
@@ -574,9 +584,8 @@ void MainWindow::buildUi()
     m_qualitySegment->addSegment(QStringLiteral("720p"), QSize(1280, 720));
     m_qualitySegment->addSegment(QStringLiteral("1080p"), QSize(1920, 1080));
     m_qualitySegment->setCurrentIndex(1);
-    connect(m_qualitySegment, &SegmentedControl::currentIndexChanged, this, [this](int) {
-        if (m_capture && m_capture->isOpen() && m_capture->isStreaming())
-            openDevice(m_capture->node());
+    connect(m_qualitySegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
+        m_preview->setQualityResolution(v.toSize());
     });
     qLayout->addWidget(m_qualitySegment);
     contentLay->addWidget(qSection);
@@ -889,19 +898,20 @@ QWidget#dock {
     border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 100px;
 }
-QPushButton#dockTextBtn {
+QPushButton#dockIconBtn {
+    width: 36px;
     height: 36px;
+    min-width: 36px;
     min-height: 36px;
+    max-width: 36px;
     max-height: 36px;
     border-radius: 18px;
     border: none;
     background: rgba(255, 255, 255, 0.12);
     color: #ffffff;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 0 14px;
+    font-size: 14px;
 }
-QPushButton#dockTextBtn:hover {
+QPushButton#dockIconBtn:hover {
     background: rgba(255, 255, 255, 0.25);
 }
 QWidget#sidebarBackdrop {
@@ -1488,12 +1498,8 @@ QString MainWindow::captureDir() const
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (m_tray->isVisible()) {
-        hide();
-        event->ignore();
-    } else {
-        QMainWindow::closeEvent(event);
-    }
+    QMainWindow::closeEvent(event);
+    qApp->quit();
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event)

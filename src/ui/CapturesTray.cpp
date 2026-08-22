@@ -1,4 +1,5 @@
 #include "CapturesTray.h"
+#include "SvgIcons.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -15,21 +16,19 @@ ThumbnailCard::ThumbnailCard(const MediaItem &item, QWidget *parent)
     setFixedSize(56, 56);
     setCursor(Qt::PointingHandCursor);
 
-    m_deleteBtn = new QPushButton(QStringLiteral("X"), this);
+    m_deleteBtn = new QPushButton(this);
+    m_deleteBtn->setIcon(icons::closeIcon(QColor(17, 17, 17), 10));
+    m_deleteBtn->setIconSize(QSize(9, 9));
     m_deleteBtn->setGeometry(39, -2, 17, 17);
     m_deleteBtn->setStyleSheet(QStringLiteral(
         "QPushButton {"
         "  background: #ffffff;"
-        "  color: #111111;"
         "  border: none;"
         "  border-radius: 8px;"
-        "  font-size: 9px;"
-        "  font-weight: 800;"
         "  padding: 0px;"
         "}"
         "QPushButton:hover {"
         "  background: #ff3b30;"
-        "  color: #ffffff;"
         "}"
     ));
     m_deleteBtn->hide();
@@ -89,12 +88,20 @@ void ThumbnailCard::paintEvent(QPaintEvent *)
         p.setBrush(QColor(0, 0, 0, 190));
         p.drawRoundedRect(badgeRect, 4, 4);
 
+        // Draw small play triangle icon
+        p.setBrush(Qt::white);
+        QPolygonF poly;
+        poly << QPointF(8, 40)
+             << QPointF(13, 43)
+             << QPointF(8, 46);
+        p.drawPolygon(poly);
+
         p.setPen(Qt::white);
         QFont f = p.font();
-        f.setPixelSize(8);
+        f.setPixelSize(7);
         f.setBold(true);
         p.setFont(f);
-        p.drawText(badgeRect, Qt::AlignCenter, QStringLiteral("VID"));
+        p.drawText(QRectF(14, 36, 16, 14), Qt::AlignCenter, QStringLiteral("VID"));
     }
 
     // Border

@@ -359,15 +359,22 @@ QImage PreviewWidget::lastRawFrame() const
     return m_lastFrame;
 }
 
+void PreviewWidget::setQualityResolution(const QSize &targetRes)
+{
+    if (m_targetQuality != targetRes) {
+        m_targetQuality = targetRes;
+    }
+}
+
 QImage PreviewWidget::processedLastFrame() const
 {
     QImage raw = lastRawFrame();
     if (raw.isNull())
         return QImage();
-    return applyEffectsToImage(raw, m_filter, m_mirrored, m_arMode);
+    return applyEffectsToImage(raw, m_filter, m_mirrored, m_arMode, m_targetQuality);
 }
 
-QImage PreviewWidget::applyEffectsToImage(const QImage &src, ColorFilter filter, bool mirror, AspectRatioMode ar)
+QImage PreviewWidget::applyEffectsToImage(const QImage &src, ColorFilter filter, bool mirror, AspectRatioMode ar, const QSize &targetRes)
 {
     if (src.isNull())
         return QImage();
@@ -395,12 +402,21 @@ QImage PreviewWidget::applyEffectsToImage(const QImage &src, ColorFilter filter,
         img = img.copy(cropX, cropY, cropW, cropH);
     }
 
-    // 2. Mirror
+    // 2. Scale to target quality resolution if specified
+    if (targetRes.isValid() && targetRes.width() > 0 && targetRes.height() > 0) {
+        // Maintain the aspect ratio of current cropped image
+        QSize scaledSize = img.size().scaled(targetRes, Qt::KeepAspectRatio);
+        if (scaledSize != img.size() && scaledSize.width() > 0 && scaledSize.height() > 0) {
+            img = img.scaled(scaledSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        }
+    }
+
+    // 3. Mirror
     if (mirror) {
         img = img.mirrored(true, false);
     }
 
-    // 3. Filter
+    // 4. Filter
     if (filter != ColorFilter::None) {
         const int w = img.width();
         const int h = img.height();

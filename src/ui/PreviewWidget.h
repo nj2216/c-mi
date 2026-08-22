@@ -61,11 +61,14 @@ public:
 
     void triggerFlash();
 
+    void setQualityResolution(const QSize &targetRes);
+    QSize qualityResolution() const { return m_targetQuality; }
+
     QImage processedLastFrame() const;
     QImage lastRawFrame() const;
     bool hasFrame() const;
 
-    static QImage applyEffectsToImage(const QImage &src, ColorFilter filter, bool mirror, AspectRatioMode ar);
+    static QImage applyEffectsToImage(const QImage &src, ColorFilter filter, bool mirror, AspectRatioMode ar, const QSize &targetRes = QSize());
 
 public slots:
     void presentFrame(const uchar *data, int bytes, QSize size, uint32_t pixFmt);
@@ -93,6 +96,7 @@ private:
 
     ColorFilter m_filter = ColorFilter::None;
     AspectRatioMode m_arMode = AspectRatioMode::Fit;
+    QSize m_targetQuality = QSize(1280, 720);
     bool m_mirrored = true;
     bool m_showGrid = false;
     float m_flashIntensity = 0.0f;

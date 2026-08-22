@@ -4,6 +4,9 @@
 #include <QFontDatabase>
 #include <QFileInfo>
 #include <QSettings>
+#include <QSplashScreen>
+#include <QPixmap>
+#include <QTimer>
 
 extern "C" {
 #include <libavutil/log.h>
@@ -22,10 +25,19 @@ int main(int argc, char *argv[])
     QApplication::setApplicationName(QStringLiteral("c-mi"));
     QApplication::setOrganizationName(QStringLiteral("c-mi"));
     QApplication::setDesktopFileName(QStringLiteral("c-mi"));
-    QApplication::setQuitOnLastWindowClosed(false); // keep running for tray
+    QApplication::setQuitOnLastWindowClosed(true);
 
     // QSettings INI backend only (portable, no dconf/GSettings).
     QSettings::setDefaultFormat(QSettings::IniFormat);
+
+    // Show splash screen
+    QPixmap splashPix(QStringLiteral(":/icons/splash.png"));
+    QSplashScreen *splash = nullptr;
+    if (!splashPix.isNull()) {
+        splash = new QSplashScreen(splashPix, Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint);
+        splash->show();
+        app.processEvents();
+    }
 
     // Load the packaged fallback before selecting the application font. This
     // keeps text rendering independent of the target machine's font setup.
@@ -61,7 +73,18 @@ int main(int argc, char *argv[])
     appFont.setPixelSize(13);
     QApplication::setFont(appFont);
 
-    cmi::MainWindow w;
-    w.show();
+    auto *w = new cmi::MainWindow();
+
+    if (splash) {
+        // Display splash screen briefly for smooth polished startup
+        QTimer::singleShot(900, [splash, w]() {
+            w->show();
+            splash->finish(w);
+            delete splash;
+        });
+    } else {
+        w->show();
+    }
+
     return QApplication::exec();
 }

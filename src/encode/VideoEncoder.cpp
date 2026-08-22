@@ -73,8 +73,17 @@ bool VideoEncoder::initVideoStream(QSize size, int fps)
     m_videoCtx->framerate = {fps, 1};
     m_videoCtx->pix_fmt = AV_PIX_FMT_YUV420P;
     m_videoCtx->gop_size = fps * 2;
-    if (codec->name && std::strcmp(codec->name, "libx264") == 0)
+    // Calculate high quality bitrate (e.g. 6 Mbps for 1080p, 3.5 Mbps for 720p, 1.5 Mbps for 480p)
+    int64_t pixels = static_cast<int64_t>(m_videoCtx->width) * m_videoCtx->height;
+    int64_t targetBitrate = std::clamp(pixels * 3, static_cast<int64_t>(1500000), static_cast<int64_t>(8000000));
+    m_videoCtx->bit_rate = targetBitrate;
+    m_videoCtx->rc_max_rate = targetBitrate * 12 / 10;
+    m_videoCtx->rc_buffer_size = targetBitrate * 2;
+
+    if (codec->name && std::strcmp(codec->name, "libx264") == 0) {
         av_opt_set(m_videoCtx->priv_data, "preset", "veryfast", 0);
+        av_opt_set(m_videoCtx->priv_data, "crf", "18", 0); // High visually lossless quality
+    }
 
     if (m_fmt->oformat->flags & AVFMT_GLOBALHEADER)
         m_videoCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
