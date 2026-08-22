@@ -287,11 +287,20 @@ void MainWindow::buildUi()
     titleLabel->setObjectName(QStringLiteral("titleLabel"));
     titleLayout->addWidget(titleLabel, 1, Qt::AlignCenter);
 
-    // Right Action: Settings
+    // Right Action: About & Settings
     auto *titleActions = new QWidget(m_titleBar);
     auto *actionsLayout = new QHBoxLayout(titleActions);
     actionsLayout->setContentsMargins(0, 0, 0, 0);
-    actionsLayout->setSpacing(8);
+    actionsLayout->setSpacing(6);
+
+    m_headerAboutBtn = new QPushButton(QStringLiteral("About"), titleActions);
+    m_headerAboutBtn->setIcon(icons::infoIcon(QColor(29, 29, 31), 16));
+    m_headerAboutBtn->setIconSize(QSize(14, 14));
+    m_headerAboutBtn->setObjectName(QStringLiteral("headerSettingsBtn"));
+    m_headerAboutBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_headerAboutBtn, &QPushButton::clicked, this, [this] {
+        m_aboutModal->showModal();
+    });
 
     m_headerSettingsBtn = new QPushButton(QStringLiteral("Settings"), titleActions);
     m_headerSettingsBtn->setIcon(icons::gearIcon(QColor(29, 29, 31), 16));
@@ -301,6 +310,7 @@ void MainWindow::buildUi()
     connect(m_headerSettingsBtn, &QPushButton::clicked, this, [this] {
         toggleSidebar(m_sidebar->isHidden());
     });
+    actionsLayout->addWidget(m_headerAboutBtn);
     actionsLayout->addWidget(m_headerSettingsBtn);
     titleLayout->addWidget(titleActions, 0, Qt::AlignRight | Qt::AlignVCenter);
 
@@ -737,12 +747,48 @@ void MainWindow::buildUi()
     hwLayout->addWidget(m_sliders);
     contentLay->addWidget(hwSection);
 
+    // About App Section in Sidebar
+    auto *aboutSection = new QWidget(sidebarContent);
+    auto *aboutSecLayout = new QVBoxLayout(aboutSection);
+    aboutSecLayout->setContentsMargins(0, 0, 0, 0);
+    aboutSecLayout->setSpacing(6);
+    auto *aboutLbl = new QLabel(QStringLiteral("ABOUT"), aboutSection);
+    aboutLbl->setObjectName(QStringLiteral("fieldLabel"));
+    aboutSecLayout->addWidget(aboutLbl);
+
+    auto *aboutAppBtn = new QPushButton(QStringLiteral("About Camera Pro"), aboutSection);
+    aboutAppBtn->setIcon(icons::infoIcon(QColor(29, 29, 31), 16));
+    aboutAppBtn->setIconSize(QSize(14, 14));
+    aboutAppBtn->setCursor(Qt::PointingHandCursor);
+    aboutAppBtn->setStyleSheet(QStringLiteral(
+        "QPushButton {"
+        "  background: rgba(0, 0, 0, 0.05);"
+        "  border: 1px solid rgba(0, 0, 0, 0.08);"
+        "  border-radius: 8px;"
+        "  color: #1d1d1f;"
+        "  font-size: 12px;"
+        "  font-weight: 600;"
+        "  padding: 8px 12px;"
+        "  text-align: left;"
+        "}"
+        "QPushButton:hover { background: rgba(0, 0, 0, 0.09); }"
+    ));
+    connect(aboutAppBtn, &QPushButton::clicked, this, [this] {
+        toggleSidebar(false);
+        m_aboutModal->showModal();
+    });
+    aboutSecLayout->addWidget(aboutAppBtn);
+    contentLay->addWidget(aboutSection);
+
     sidebarScroll->setWidget(sidebarContent);
     sidebarLayout->addWidget(sidebarScroll, 1);
 
     // 5. Preview Modal Dialog
     m_previewModal = new PreviewModal(m_centralRoot);
     connect(m_previewModal, &PreviewModal::deleteRequested, this, &MainWindow::onCaptureItemDeleted);
+
+    // 6. About Modal Dialog
+    m_aboutModal = new AboutModal(m_centralRoot);
 
     setCentralWidget(m_centralRoot);
     resize(1120, 760);
@@ -996,6 +1042,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     const int drawerW = 290;
     m_sidebarBackdrop->setGeometry(m_centralRoot->rect());
     m_previewModal->setGeometry(m_centralRoot->rect());
+    if (m_aboutModal) {
+        m_aboutModal->setGeometry(m_centralRoot->rect());
+    }
     if (!m_sidebar->isHidden()) {
         m_sidebar->setGeometry(m_centralRoot->width() - drawerW, 0, drawerW, m_centralRoot->height());
     } else {
@@ -1505,7 +1554,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
     if (event->key() == Qt::Key_Escape) {
-        if (!m_previewModal->isHidden()) {
+        if (m_aboutModal && !m_aboutModal->isHidden()) {
+            m_aboutModal->hideModal();
+        } else if (!m_previewModal->isHidden()) {
             m_previewModal->hideModal();
         } else if (!m_sidebar->isHidden()) {
             toggleSidebar(false);

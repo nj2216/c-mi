@@ -128,6 +128,28 @@ inline QIcon videoBadgeIcon(const QColor &color = Qt::white, int size = 16)
     return QIcon(pm);
 }
 
+inline QIcon infoIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    p.setPen(QPen(color, size * 0.09, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+
+    const qreal center = size / 2.0;
+    const qreal r = size * 0.40;
+    p.drawEllipse(QPointF(center, center), r, r);
+
+    // Draw 'i' dot and line
+    p.setBrush(color);
+    p.drawEllipse(QPointF(center, center - size * 0.18), size * 0.05, size * 0.05);
+    p.drawLine(QPointF(center, center - size * 0.05), QPointF(center, center + size * 0.22));
+    p.end();
+    return QIcon(pm);
+}
+
 } // namespace icons
 } // namespace cmi
 

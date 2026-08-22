@@ -13,6 +13,7 @@
 #include "PreviewWidget.h"
 #include "CapturesTray.h"
 #include "PreviewModal.h"
+#include "AboutModal.h"
 #include "SegmentedControl.h"
 #include "ToggleSwitch.h"
 
@@ -127,6 +128,7 @@ private:
     QPushButton *m_closeDot = nullptr;
     QPushButton *m_minDot = nullptr;
     QPushButton *m_maxDot = nullptr;
+    QPushButton *m_headerAboutBtn = nullptr;
     QPushButton *m_headerSettingsBtn = nullptr;
 
     // Viewfinder & Stage
@@ -137,6 +139,7 @@ private:
     QWidget *m_emptyState = nullptr;
     CapturesTray *m_capturesTray = nullptr;
     PreviewModal *m_previewModal = nullptr;
+    AboutModal *m_aboutModal = nullptr;
 
     // Dock controls
     QPushButton *m_modePhotoBtn = nullptr;

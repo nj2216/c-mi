@@ -70,6 +70,8 @@ add_executable(c-mi
     src/ui/CapturesTray.cpp
     src/ui/PreviewModal.h
     src/ui/PreviewModal.cpp
+    src/ui/AboutModal.h
+    src/ui/AboutModal.cpp
     src/ui/TrayIcon.h
     src/ui/TrayIcon.cpp
     src/ui/SvgIcons.h
