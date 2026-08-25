@@ -53,6 +53,7 @@ public:
     void clear();
     void scanDirectory(const QString &dir);
     int count() const { return static_cast<int>(m_items.size()); }
+    const std::vector<MediaItem>& items() const { return m_items; }
 
 signals:
     void itemClicked(const MediaItem &item);

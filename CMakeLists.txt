@@ -33,6 +33,19 @@ if(CMI_STATIC)
     endforeach()
 
     set(PKG_CONFIG_USE_STATIC_LIBS TRUE)
+
+    # Automatically prioritize static FFmpeg pkgconfig paths from /opt/cmi-static or CMAKE_PREFIX_PATH
+    set(_pkgconfig_paths
+        "/opt/cmi-static/lib/pkgconfig"
+        "${CMAKE_PREFIX_PATH}/lib/pkgconfig"
+        "${CMAKE_PREFIX_PATH}/../lib/pkgconfig"
+    )
+    foreach(_p IN LISTS _pkgconfig_paths)
+        if(EXISTS "${_p}")
+            set(ENV{PKG_CONFIG_PATH} "${_p}:$ENV{PKG_CONFIG_PATH}")
+        endif()
+    endforeach()
+
     # Prefer static archives, but fall back to shared libraries for things
     # like GL/X11 that never ship a static archive (GL must dlopen the
     # vendor driver at runtime, so it can't be linked statically anyway).
@@ -79,10 +92,12 @@ add_executable(c-mi
 
 target_include_directories(c-mi PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${FFMPEG_STATIC_INCLUDE_DIRS}
     ${FFMPEG_INCLUDE_DIRS}
 )
 
 target_link_directories(c-mi PRIVATE
+    ${FFMPEG_STATIC_LIBRARY_DIRS}
     ${FFMPEG_LIBRARY_DIRS}
 )
 
@@ -91,12 +106,18 @@ target_compile_options(c-mi PRIVATE
     ${FFMPEG_CFLAGS_OTHER}
 )
 
+if(CMI_STATIC AND FFMPEG_STATIC_LIBRARIES)
+    set(FFMPEG_LIBS_TO_LINK ${FFMPEG_STATIC_LIBRARIES})
+else()
+    set(FFMPEG_LIBS_TO_LINK ${FFMPEG_LIBRARIES})
+endif()
+
 target_link_libraries(c-mi PRIVATE
     Qt6::Widgets
     Qt6::OpenGLWidgets
     Qt6::Gui
     Qt6::Core
-    ${FFMPEG_LIBRARIES}
+    ${FFMPEG_LIBS_TO_LINK}
     GL
     pthread
 )
@@ -113,7 +134,18 @@ if(CMI_STATIC)
         -static-libstdc++
     )
     if(COMMAND qt_import_plugins)
-        qt_import_plugins(c-mi INCLUDE Qt6::QXcbIntegrationPlugin)
+        qt_import_plugins(c-mi
+            INCLUDE
+                Qt6::QXcbIntegrationPlugin
+                Qt6::QXcbGlxIntegrationPlugin
+                Qt6::QXcbEglIntegrationPlugin
+                Qt6::QOffscreenIntegrationPlugin
+                Qt6::QJpegPlugin
+                Qt6::QGifPlugin
+                Qt6::QICOPlugin
+                Qt6::QComposePlatformInputContextPlugin
+                Qt6::QXdgDesktopPortalThemePlugin
+        )
     else()
         message(FATAL_ERROR "CMI_STATIC requires Qt's qt_import_plugins command")
     endif()

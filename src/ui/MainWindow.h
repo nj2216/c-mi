@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 #include <QButtonGroup>
 #include <QPoint>
+#include <QStackedWidget>
 #include <vector>
 
 #include "PreviewWidget.h"
@@ -103,8 +104,21 @@ private:
     void updateTrayState();
     QString captureDir() const;
 
+    enum class QuickPanel {
+        None = -1,
+        AspectRatio = 0,
+        Quality = 1,
+        Filters = 2,
+        TimerBurst = 3,
+        Denoise = 4,
+        Toggles = 5
+    };
+
     void setAppMode(AppMode mode);
     void toggleSidebar(bool show);
+    void toggleQuickPanel(QuickPanel panel);
+    void hideQuickPanel();
+    void updateDockButtonStates();
     void executePhotoCaptureSequence();
     void doSinglePhotoCapture();
     void startRecording();
@@ -141,12 +155,23 @@ private:
     PreviewModal *m_previewModal = nullptr;
     AboutModal *m_aboutModal = nullptr;
 
-    // Dock controls
+    // Dock controls & Drop-Up Bar
+    QWidget *m_quickControlsBar = nullptr;
+    QStackedWidget *m_quickControlsStack = nullptr;
+    QuickPanel m_activeQuickPanel = QuickPanel::None;
+
     QPushButton *m_modePhotoBtn = nullptr;
     QPushButton *m_modeVideoBtn = nullptr;
     ShutterButton *m_shutterBtn = nullptr;
     QPushButton *m_switchCamBtn = nullptr;
     QPushButton *m_dockSettingsBtn = nullptr;
+
+    QPushButton *m_aspectRatioBtn = nullptr;
+    QPushButton *m_qualityBtn = nullptr;
+    QPushButton *m_filtersBtn = nullptr;
+    QPushButton *m_timerBurstBtn = nullptr;
+    QPushButton *m_denoiseBtn = nullptr;
+    QPushButton *m_togglesBtn = nullptr;
 
     // Slide-out Sidebar & Backdrop
     QWidget *m_sidebar = nullptr;

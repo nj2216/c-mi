@@ -150,6 +150,154 @@ inline QIcon infoIcon(const QColor &color = Qt::white, int size = 24)
     return QIcon(pm);
 }
 
+inline QIcon aspectRatioIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(color, size * 0.09, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    QRectF r(size * 0.15, size * 0.25, size * 0.70, size * 0.50);
+    p.drawRoundedRect(r, 3, 3);
+    p.setPen(QPen(color, size * 0.08, Qt::DotLine, Qt::RoundCap));
+    p.drawLine(QPointF(size * 0.15, size * 0.5), QPointF(size * 0.85, size * 0.5));
+    p.end();
+    return QIcon(pm);
+}
+
+inline QIcon qualityBadgeIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(color, size * 0.09, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    QRectF r(size * 0.12, size * 0.20, size * 0.76, size * 0.60);
+    p.drawRoundedRect(r, 4, 4);
+    p.setPen(color);
+    QFont f = p.font();
+    f.setPixelSize(static_cast<int>(size * 0.36));
+    f.setBold(true);
+    p.setFont(f);
+    p.drawText(r, Qt::AlignCenter, QStringLiteral("HD"));
+    p.end();
+    return QIcon(pm);
+}
+
+inline QIcon filtersIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(color, size * 0.08, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    const qreal r = size * 0.22;
+    const qreal cx = size / 2.0;
+    const qreal cy = size / 2.0;
+    p.drawEllipse(QPointF(cx, cy - r * 0.6), r, r);
+    p.drawEllipse(QPointF(cx - r * 0.6, cy + r * 0.5), r, r);
+    p.drawEllipse(QPointF(cx + r * 0.6, cy + r * 0.5), r, r);
+    p.end();
+    return QIcon(pm);
+}
+
+inline QIcon timerIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(color, size * 0.09, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    const qreal cx = size / 2.0;
+    const qreal cy = size * 0.54;
+    const qreal r = size * 0.36;
+    p.drawEllipse(QPointF(cx, cy), r, r);
+    p.drawLine(QPointF(cx, size * 0.18), QPointF(cx, size * 0.06));
+    p.drawLine(QPointF(cx - size * 0.12, size * 0.06), QPointF(cx + size * 0.12, size * 0.06));
+    p.drawLine(QPointF(cx, cy), QPointF(cx, cy - r * 0.65));
+    p.drawLine(QPointF(cx, cy), QPointF(cx + r * 0.5, cy));
+    p.end();
+    return QIcon(pm);
+}
+
+inline QIcon noiseReductionIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.setBrush(color);
+    auto drawSparkle = [&](qreal cx, qreal cy, qreal rad) {
+        QPainterPath path;
+        path.moveTo(cx, cy - rad);
+        path.quadTo(cx, cy, cx + rad, cy);
+        path.quadTo(cx, cy, cx, cy + rad);
+        path.quadTo(cx, cy, cx - rad, cy);
+        path.quadTo(cx, cy, cx, cy - rad);
+        p.drawPath(path);
+    };
+    drawSparkle(size * 0.50, size * 0.44, size * 0.36);
+    drawSparkle(size * 0.78, size * 0.22, size * 0.16);
+    drawSparkle(size * 0.22, size * 0.74, size * 0.14);
+    p.end();
+    return QIcon(pm);
+}
+
+inline QIcon togglesIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(color, size * 0.09, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawLine(QPointF(size * 0.15, size * 0.30), QPointF(size * 0.85, size * 0.30));
+    p.drawEllipse(QPointF(size * 0.38, size * 0.30), size * 0.12, size * 0.12);
+    p.drawLine(QPointF(size * 0.15, size * 0.70), QPointF(size * 0.85, size * 0.70));
+    p.drawEllipse(QPointF(size * 0.64, size * 0.70), size * 0.12, size * 0.12);
+    p.end();
+    return QIcon(pm);
+}
+
+inline QIcon chevronLeftIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(color, size * 0.11, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    QPainterPath path;
+    path.moveTo(size * 0.62, size * 0.22);
+    path.lineTo(size * 0.35, size * 0.50);
+    path.lineTo(size * 0.62, size * 0.78);
+    p.drawPath(path);
+    p.end();
+    return QIcon(pm);
+}
+
+inline QIcon chevronRightIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(color, size * 0.11, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    QPainterPath path;
+    path.moveTo(size * 0.38, size * 0.22);
+    path.lineTo(size * 0.65, size * 0.50);
+    path.lineTo(size * 0.38, size * 0.78);
+    p.drawPath(path);
+    p.end();
+    return QIcon(pm);
+}
+
 } // namespace icons
 } // namespace cmi
 

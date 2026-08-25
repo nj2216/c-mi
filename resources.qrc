@@ -2,5 +2,6 @@
     <qresource prefix="/icons">
         <file alias="c-mi.svg">data/icons/c-mi.svg</file>
         <file alias="splash.png">data/icons/splash.png</file>
+        <file alias="c-mi-logo.png">data/icons/c-mi-logo.png</file>
     </qresource>
 </RCC>

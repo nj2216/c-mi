@@ -46,7 +46,7 @@ AboutModal::AboutModal(QWidget *parent)
     iconLabel->setAlignment(Qt::AlignCenter);
     QPixmap iconPix(QStringLiteral(":/icons/c-mi-logo.png"));
     if (iconPix.isNull()) {
-        iconPix = QPixmap(QStringLiteral(":/icons/splash.png"));
+        iconPix = QPixmap(QStringLiteral(":/icons/c-mi-logo.png"));
     }
     if (!iconPix.isNull()) {
         iconLabel->setPixmap(iconPix.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));

@@ -8,13 +8,13 @@ namespace cmi {
 ToggleSwitch::ToggleSwitch(QWidget *parent)
     : QAbstractButton(parent)
 {
-    setCheckable(true);
-    setChecked(false);
-    setCursor(Qt::PointingHandCursor);
-
     m_anim = new QPropertyAnimation(this, "knobOffset", this);
     m_anim->setDuration(160);
     m_anim->setEasingCurve(QEasingCurve::InOutQuad);
+
+    setCheckable(true);
+    setChecked(false);
+    setCursor(Qt::PointingHandCursor);
 }
 
 QSize ToggleSwitch::sizeHint() const
@@ -36,10 +36,25 @@ void ToggleSwitch::setKnobOffset(qreal offset)
 void ToggleSwitch::nextCheckState()
 {
     QAbstractButton::nextCheckState();
-    m_anim->stop();
-    m_anim->setStartValue(m_offset);
-    m_anim->setEndValue(isChecked() ? 1.0 : 0.0);
-    m_anim->start();
+    if (m_anim) {
+        m_anim->stop();
+        m_anim->setStartValue(m_offset);
+        m_anim->setEndValue(isChecked() ? 1.0 : 0.0);
+        m_anim->start();
+    } else {
+        m_offset = isChecked() ? 1.0 : 0.0;
+        update();
+    }
+}
+
+void ToggleSwitch::checkStateSet()
+{
+    QAbstractButton::checkStateSet();
+    if (m_anim) {
+        m_anim->stop();
+    }
+    m_offset = isChecked() ? 1.0 : 0.0;
+    update();
 }
 
 void ToggleSwitch::paintEvent(QPaintEvent *)
@@ -51,8 +66,8 @@ void ToggleSwitch::paintEvent(QPaintEvent *)
     const qreal h = height();
     const qreal radius = h / 2.0;
 
-    // Background track
-    QColor offBg(0, 0, 0, 38);
+    // Background track (clean Apple-style switch track for dark/light themes)
+    QColor offBg(120, 120, 128, 100);
     QColor onBg(52, 199, 89); // Apple green #34c759
 
     int r = static_cast<int>(offBg.red() + (onBg.red() - offBg.red()) * m_offset);

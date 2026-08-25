@@ -22,6 +22,7 @@ public:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void nextCheckState() override;
+    void checkStateSet() override;
 
 private:
     qreal m_offset = 0.0;

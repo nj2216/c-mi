@@ -32,6 +32,7 @@
 #include <QPainterPath>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QStyle>
 
 #include <linux/videodev2.h>
 
@@ -226,6 +227,7 @@ void MainWindow::buildUi()
     // The central widget IS the .window root (no outer whitespace margins)
     m_centralRoot = new QWidget(this);
     m_centralRoot->setObjectName(QStringLiteral("windowContainer"));
+    m_centralRoot->setAttribute(Qt::WA_StyledBackground, true);
     m_centralRoot->setMouseTracking(true);
 
     auto *windowLayout = new QVBoxLayout(m_centralRoot);
@@ -235,6 +237,7 @@ void MainWindow::buildUi()
     // 1. Titlebar (height: 42px)
     m_titleBar = new QWidget(m_centralRoot);
     m_titleBar->setObjectName(QStringLiteral("titleBar"));
+    m_titleBar->setAttribute(Qt::WA_StyledBackground, true);
     m_titleBar->setFixedHeight(42);
     m_titleBar->installEventFilter(this);
 
@@ -319,6 +322,7 @@ void MainWindow::buildUi()
     // 2. Body Area (Stage + Captures Tray + Dock)
     auto *body = new QWidget(m_centralRoot);
     body->setObjectName(QStringLiteral("bodyArea"));
+    body->setAttribute(Qt::WA_StyledBackground, true);
     auto *bodyLayout = new QVBoxLayout(body);
     bodyLayout->setContentsMargins(0, 0, 0, 0);
     bodyLayout->setSpacing(0);
@@ -326,6 +330,7 @@ void MainWindow::buildUi()
     // Stage (Viewfinder Stage)
     auto *stage = new QWidget(body);
     stage->setObjectName(QStringLiteral("stage"));
+    stage->setAttribute(Qt::WA_StyledBackground, true);
     auto *stageLayout = new QVBoxLayout(stage);
     stageLayout->setContentsMargins(16, 14, 16, 0);
     stageLayout->setSpacing(0);
@@ -408,7 +413,15 @@ void MainWindow::buildUi()
     // Horizontal Captures Tray (Apple Photo Booth style)
     m_capturesTray = new CapturesTray(stage);
     connect(m_capturesTray, &CapturesTray::itemClicked, this, [this](const MediaItem &item) {
-        m_previewModal->showItem(item);
+        const auto &items = m_capturesTray->items();
+        int idx = 0;
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (items[i].filePath == item.filePath) {
+                idx = static_cast<int>(i);
+                break;
+            }
+        }
+        m_previewModal->setItems(items, idx);
     });
     connect(m_capturesTray, &CapturesTray::itemDeleteRequested, this, &MainWindow::onCaptureItemDeleted);
     connect(m_capturesTray, &CapturesTray::openFolderRequested, this, [this] {
@@ -421,10 +434,257 @@ void MainWindow::buildUi()
     // 3. Bottom Dock Wrap
     auto *dockWrap = new QWidget(body);
     dockWrap->setObjectName(QStringLiteral("dockWrap"));
+    dockWrap->setAttribute(Qt::WA_StyledBackground, true);
     auto *dockWrapLayout = new QVBoxLayout(dockWrap);
-    dockWrapLayout->setContentsMargins(20, 6, 20, 14);
+    dockWrapLayout->setContentsMargins(20, 4, 20, 14);
     dockWrapLayout->setSpacing(6);
     dockWrapLayout->setAlignment(Qt::AlignCenter);
+
+    // -----------------------------------------------------------------
+    // Drop-Up Quick Controls Bar (Phone-style floating horizontal bar)
+    // -----------------------------------------------------------------
+    m_quickControlsBar = new QWidget(dockWrap);
+    m_quickControlsBar->setObjectName(QStringLiteral("quickControlsBar"));
+    m_quickControlsBar->setAttribute(Qt::WA_StyledBackground, true);
+    m_quickControlsBar->hide();
+
+    auto *quickBarLayout = new QHBoxLayout(m_quickControlsBar);
+    quickBarLayout->setContentsMargins(12, 5, 10, 5);
+    quickBarLayout->setSpacing(10);
+    quickBarLayout->setAlignment(Qt::AlignCenter);
+
+    m_quickControlsStack = new QStackedWidget(m_quickControlsBar);
+    m_quickControlsStack->setObjectName(QStringLiteral("quickControlsStack"));
+
+    // Page 0: Aspect Ratio
+    auto *arPage = new QWidget(m_quickControlsStack);
+    auto *arPageLay = new QHBoxLayout(arPage);
+    arPageLay->setContentsMargins(0, 0, 0, 0);
+    arPageLay->setSpacing(8);
+    arPageLay->setAlignment(Qt::AlignCenter);
+
+    auto *arTitle = new QLabel(QStringLiteral("RATIO:"), arPage);
+    arTitle->setObjectName(QStringLiteral("quickTitleLabel"));
+    arPageLay->addWidget(arTitle);
+
+    m_arSegment = new SegmentedControl(arPage);
+    m_arSegment->addSegment(QStringLiteral("Fit"), static_cast<int>(AspectRatioMode::Fit));
+    m_arSegment->addSegment(QStringLiteral("16:9"), static_cast<int>(AspectRatioMode::Ratio16_9));
+    m_arSegment->addSegment(QStringLiteral("4:3"), static_cast<int>(AspectRatioMode::Ratio4_3));
+    m_arSegment->addSegment(QStringLiteral("1:1"), static_cast<int>(AspectRatioMode::Ratio1_1));
+    connect(m_arSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &d) {
+        m_preview->setAspectRatioMode(static_cast<AspectRatioMode>(d.toInt()));
+    });
+    arPageLay->addWidget(m_arSegment);
+    m_quickControlsStack->addWidget(arPage); // Index 0: AspectRatio
+
+    // Page 1: Quality
+    auto *qPage = new QWidget(m_quickControlsStack);
+    auto *qPageLay = new QHBoxLayout(qPage);
+    qPageLay->setContentsMargins(0, 0, 0, 0);
+    qPageLay->setSpacing(8);
+    qPageLay->setAlignment(Qt::AlignCenter);
+
+    auto *qTitle = new QLabel(QStringLiteral("QUALITY:"), qPage);
+    qTitle->setObjectName(QStringLiteral("quickTitleLabel"));
+    qPageLay->addWidget(qTitle);
+
+    m_qualitySegment = new SegmentedControl(qPage);
+    m_qualitySegment->addSegment(QStringLiteral("480p"), QSize(640, 480));
+    m_qualitySegment->addSegment(QStringLiteral("720p"), QSize(1280, 720));
+    m_qualitySegment->addSegment(QStringLiteral("1080p"), QSize(1920, 1080));
+    m_qualitySegment->setCurrentIndex(1);
+    connect(m_qualitySegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
+        m_preview->setQualityResolution(v.toSize());
+    });
+    qPageLay->addWidget(m_qualitySegment);
+    m_quickControlsStack->addWidget(qPage); // Index 1: Quality
+
+    // Page 2: Color Filters (Horizontal Row of Swatches)
+    auto *fxPage = new QWidget(m_quickControlsStack);
+    auto *fxPageLay = new QHBoxLayout(fxPage);
+    fxPageLay->setContentsMargins(0, 0, 0, 0);
+    fxPageLay->setSpacing(8);
+    fxPageLay->setAlignment(Qt::AlignCenter);
+
+    auto *fxTitle = new QLabel(QStringLiteral("FILTER:"), fxPage);
+    fxTitle->setObjectName(QStringLiteral("quickTitleLabel"));
+    fxPageLay->addWidget(fxTitle);
+
+    m_fxGroup = new QButtonGroup(this);
+    m_fxGroup->setExclusive(true);
+
+    struct SwatchDef {
+        const char *name;
+        ColorFilter filter;
+        const char *grad;
+    };
+    const SwatchDef swatches[] = {
+        {"None", ColorFilter::None, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #c7c7cc, stop:1 #8e8e93)"},
+        {"Mono", ColorFilter::Grayscale, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6e6e73, stop:1 #1d1d1f)"},
+        {"Sepia", ColorFilter::Sepia, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #c9a06a, stop:1 #8a5a2b)"},
+        {"Cool", ColorFilter::Cool, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #5ac8fa, stop:1 #0071e3)"},
+        {"Warm", ColorFilter::Warm, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ff9f0a, stop:1 #ff375f)"},
+        {"Cyber", ColorFilter::Cyber, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ff007f, stop:1 #00f0ff)"},
+        {"Noir", ColorFilter::Noir, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #000000, stop:1 #434343)"},
+        {"Vintage", ColorFilter::Vintage, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #d4a373, stop:1 #a98467)"},
+        {"Invert", ColorFilter::Invert, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #11998e, stop:1 #38ef7d)"}
+    };
+
+    auto *fxRow = new QWidget(fxPage);
+    fxRow->setStyleSheet(QStringLiteral("background: transparent;"));
+    auto *fxRowLay = new QHBoxLayout(fxRow);
+    fxRowLay->setContentsMargins(0, 0, 0, 0);
+    fxRowLay->setSpacing(5);
+
+    for (int i = 0; i < 9; ++i) {
+        auto *btn = new QPushButton(QString::fromLatin1(swatches[i].name), fxRow);
+        btn->setCheckable(true);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setFixedHeight(26);
+        btn->setFixedWidth(50);
+        btn->setStyleSheet(QStringLiteral(
+            "QPushButton {"
+            "  background: %1;"
+            "  border: 1px solid rgba(255, 255, 255, 0.25);"
+            "  border-radius: 6px;"
+            "  color: #ffffff;"
+            "  font-size: 10px;"
+            "  font-weight: 700;"
+            "}"
+            "QPushButton:checked {"
+            "  border: 2px solid #0071e3;"
+            "}"
+        ).arg(QString::fromLatin1(swatches[i].grad)));
+
+        m_fxGroup->addButton(btn, static_cast<int>(swatches[i].filter));
+        fxRowLay->addWidget(btn);
+        if (i == 0) btn->setChecked(true);
+    }
+    connect(m_fxGroup, &QButtonGroup::idClicked, this, [this](int id) {
+        m_preview->setFilter(static_cast<ColorFilter>(id));
+    });
+    fxPageLay->addWidget(fxRow);
+    m_quickControlsStack->addWidget(fxPage); // Index 2: Filters
+
+    // Page 3: Timer & Burst
+    auto *tbPage = new QWidget(m_quickControlsStack);
+    auto *tbPageLay = new QHBoxLayout(tbPage);
+    tbPageLay->setContentsMargins(0, 0, 0, 0);
+    tbPageLay->setSpacing(12);
+    tbPageLay->setAlignment(Qt::AlignCenter);
+
+    auto *tbTimerTitle = new QLabel(QStringLiteral("TIMER:"), tbPage);
+    tbTimerTitle->setObjectName(QStringLiteral("quickTitleLabel"));
+    tbPageLay->addWidget(tbTimerTitle);
+
+    m_timerSegment = new SegmentedControl(tbPage);
+    m_timerSegment->addSegment(QStringLiteral("Off"), 0);
+    m_timerSegment->addSegment(QStringLiteral("3s"), 3);
+    m_timerSegment->addSegment(QStringLiteral("5s"), 5);
+    m_timerSegment->addSegment(QStringLiteral("10s"), 10);
+    connect(m_timerSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
+        m_timerDuration = v.toInt();
+    });
+    tbPageLay->addWidget(m_timerSegment);
+
+    auto *tbBurstTitle = new QLabel(QStringLiteral("BURST:"), tbPage);
+    tbBurstTitle->setObjectName(QStringLiteral("quickTitleLabel"));
+    tbPageLay->addWidget(tbBurstTitle);
+
+    m_burstSegment = new SegmentedControl(tbPage);
+    m_burstSegment->addSegment(QStringLiteral("1x"), 1);
+    m_burstSegment->addSegment(QStringLiteral("3x"), 3);
+    m_burstSegment->addSegment(QStringLiteral("5x"), 5);
+    connect(m_burstSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
+        m_burstCount = v.toInt();
+    });
+    tbPageLay->addWidget(m_burstSegment);
+    m_quickControlsStack->addWidget(tbPage); // Index 3: TimerBurst
+
+    // Page 4: Noise Reduction
+    auto *nrPage = new QWidget(m_quickControlsStack);
+    auto *nrPageLay = new QHBoxLayout(nrPage);
+    nrPageLay->setContentsMargins(0, 0, 0, 0);
+    nrPageLay->setSpacing(8);
+    nrPageLay->setAlignment(Qt::AlignCenter);
+
+    auto *nrTitle = new QLabel(QStringLiteral("ANTI-NOISE:"), nrPage);
+    nrTitle->setObjectName(QStringLiteral("quickTitleLabel"));
+    nrPageLay->addWidget(nrTitle);
+
+    m_denoiseSegment = new SegmentedControl(nrPage);
+    m_denoiseSegment->addSegment(QStringLiteral("Off"), 0);
+    m_denoiseSegment->addSegment(QStringLiteral("Low"), 1);
+    m_denoiseSegment->addSegment(QStringLiteral("Med"), 2);
+    m_denoiseSegment->addSegment(QStringLiteral("High"), 3);
+
+    QSettings settings(QStringLiteral("c-mi"), QStringLiteral("c-mi"));
+    int savedDenoise = settings.value(QStringLiteral("denoiseLevel"), 0).toInt();
+    m_denoiseLevel = std::clamp(savedDenoise, 0, 3);
+    m_denoiseSegment->setCurrentIndex(m_denoiseLevel);
+    m_preview->setDenoiseLevel(m_denoiseLevel);
+
+    connect(m_denoiseSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
+        m_denoiseLevel = v.toInt();
+        m_preview->setDenoiseLevel(m_denoiseLevel);
+        QSettings s(QStringLiteral("c-mi"), QStringLiteral("c-mi"));
+        s.setValue(QStringLiteral("denoiseLevel"), m_denoiseLevel);
+    });
+    nrPageLay->addWidget(m_denoiseSegment);
+    m_quickControlsStack->addWidget(nrPage); // Index 4: Denoise
+
+    // Page 5: Quick Toggles (Grid, Mirror, Flash, Sound, Mic)
+    auto *togPage = new QWidget(m_quickControlsStack);
+    auto *togPageLay = new QHBoxLayout(togPage);
+    togPageLay->setContentsMargins(0, 0, 0, 0);
+    togPageLay->setSpacing(10);
+    togPageLay->setAlignment(Qt::AlignCenter);
+
+    auto addQuickToggle = [&](const QString &label, ToggleSwitch *&sw, bool defaultChecked, auto callback) {
+        auto *item = new QWidget(togPage);
+        auto *itemLay = new QHBoxLayout(item);
+        itemLay->setContentsMargins(0, 0, 0, 0);
+        itemLay->setSpacing(6);
+        auto *name = new QLabel(label, item);
+        name->setStyleSheet(QStringLiteral("color: #ffffff; font-size: 11px; font-weight: 600;"));
+        sw = new ToggleSwitch(item);
+        sw->setChecked(defaultChecked);
+        connect(sw, &QAbstractButton::toggled, this, callback);
+        itemLay->addWidget(name);
+        itemLay->addWidget(sw);
+        togPageLay->addWidget(item);
+    };
+
+    addQuickToggle(QStringLiteral("Grid"), m_gridToggle, false, [this](bool on) {
+        m_preview->setShowGrid(on);
+    });
+    addQuickToggle(QStringLiteral("Mirror"), m_mirrorToggle, true, [this](bool on) {
+        m_preview->setMirrored(on);
+    });
+    addQuickToggle(QStringLiteral("Flash"), m_flashToggle, true, [this](bool on) {
+        m_flashEnabled = on;
+    });
+    addQuickToggle(QStringLiteral("SFX"), m_soundToggle, true, [this](bool on) {
+        m_soundEnabled = on;
+    });
+    addQuickToggle(QStringLiteral("Mic"), m_micToggle, true, [this](bool on) {
+        m_micEnabled = on;
+    });
+    m_quickControlsStack->addWidget(togPage); // Index 5: Toggles
+
+    quickBarLayout->addWidget(m_quickControlsStack);
+
+    // Close button for drop-up bar
+    auto *closeBarBtn = new QPushButton(m_quickControlsBar);
+    closeBarBtn->setObjectName(QStringLiteral("quickBarCloseBtn"));
+    closeBarBtn->setIcon(icons::closeIcon(QColor(255, 255, 255, 200), 12));
+    closeBarBtn->setIconSize(QSize(10, 10));
+    closeBarBtn->setCursor(Qt::PointingHandCursor);
+    connect(closeBarBtn, &QPushButton::clicked, this, &MainWindow::hideQuickPanel);
+    quickBarLayout->addWidget(closeBarBtn);
+
+    dockWrapLayout->addWidget(m_quickControlsBar, 0, Qt::AlignCenter);
 
     // Mode Selector (PHOTO | VIDEO)
     auto *modeSelector = new QWidget(dockWrap);
@@ -459,10 +719,42 @@ void MainWindow::buildUi()
     // Floating pill dock
     auto *dock = new QWidget(dockWrap);
     dock->setObjectName(QStringLiteral("dock"));
+    dock->setAttribute(Qt::WA_StyledBackground, true);
     auto *dockLayout = new QHBoxLayout(dock);
-    dockLayout->setContentsMargins(18, 6, 18, 6);
-    dockLayout->setSpacing(20);
+    dockLayout->setContentsMargins(14, 6, 14, 6);
+    dockLayout->setSpacing(10);
     dockLayout->setAlignment(Qt::AlignCenter);
+
+    // Left quick controls
+    m_aspectRatioBtn = new QPushButton(dock);
+    m_aspectRatioBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_aspectRatioBtn->setIcon(icons::aspectRatioIcon(Qt::white, 20));
+    m_aspectRatioBtn->setIconSize(QSize(18, 18));
+    m_aspectRatioBtn->setToolTip(QStringLiteral("Aspect Ratio"));
+    m_aspectRatioBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_aspectRatioBtn, &QPushButton::clicked, this, [this] {
+        toggleQuickPanel(QuickPanel::AspectRatio);
+    });
+
+    m_qualityBtn = new QPushButton(dock);
+    m_qualityBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_qualityBtn->setIcon(icons::qualityBadgeIcon(Qt::white, 20));
+    m_qualityBtn->setIconSize(QSize(18, 18));
+    m_qualityBtn->setToolTip(QStringLiteral("Quality / Resolution"));
+    m_qualityBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_qualityBtn, &QPushButton::clicked, this, [this] {
+        toggleQuickPanel(QuickPanel::Quality);
+    });
+
+    m_filtersBtn = new QPushButton(dock);
+    m_filtersBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_filtersBtn->setIcon(icons::filtersIcon(Qt::white, 20));
+    m_filtersBtn->setIconSize(QSize(18, 18));
+    m_filtersBtn->setToolTip(QStringLiteral("Color Filters"));
+    m_filtersBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_filtersBtn, &QPushButton::clicked, this, [this] {
+        toggleQuickPanel(QuickPanel::Filters);
+    });
 
     m_switchCamBtn = new QPushButton(dock);
     m_switchCamBtn->setObjectName(QStringLiteral("dockIconBtn"));
@@ -477,21 +769,59 @@ void MainWindow::buildUi()
         }
     });
 
+    // Center Shutter
     m_shutterBtn = new ShutterButton(dock);
     connect(m_shutterBtn, &QAbstractButton::clicked, this, &MainWindow::onShutterClicked);
+
+    // Right quick controls
+    m_timerBurstBtn = new QPushButton(dock);
+    m_timerBurstBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_timerBurstBtn->setIcon(icons::timerIcon(Qt::white, 20));
+    m_timerBurstBtn->setIconSize(QSize(18, 18));
+    m_timerBurstBtn->setToolTip(QStringLiteral("Timer & Burst"));
+    m_timerBurstBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_timerBurstBtn, &QPushButton::clicked, this, [this] {
+        toggleQuickPanel(QuickPanel::TimerBurst);
+    });
+
+    m_denoiseBtn = new QPushButton(dock);
+    m_denoiseBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_denoiseBtn->setIcon(icons::noiseReductionIcon(Qt::white, 20));
+    m_denoiseBtn->setIconSize(QSize(18, 18));
+    m_denoiseBtn->setToolTip(QStringLiteral("Anti-Noise Reduction"));
+    m_denoiseBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_denoiseBtn, &QPushButton::clicked, this, [this] {
+        toggleQuickPanel(QuickPanel::Denoise);
+    });
+
+    m_togglesBtn = new QPushButton(dock);
+    m_togglesBtn->setObjectName(QStringLiteral("dockIconBtn"));
+    m_togglesBtn->setIcon(icons::togglesIcon(Qt::white, 20));
+    m_togglesBtn->setIconSize(QSize(18, 18));
+    m_togglesBtn->setToolTip(QStringLiteral("Quick Toggles (Grid, Mirror, Flash, SFX, Mic)"));
+    m_togglesBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_togglesBtn, &QPushButton::clicked, this, [this] {
+        toggleQuickPanel(QuickPanel::Toggles);
+    });
 
     m_dockSettingsBtn = new QPushButton(dock);
     m_dockSettingsBtn->setObjectName(QStringLiteral("dockIconBtn"));
     m_dockSettingsBtn->setIcon(icons::gearIcon(Qt::white, 20));
     m_dockSettingsBtn->setIconSize(QSize(18, 18));
-    m_dockSettingsBtn->setToolTip(QStringLiteral("Settings"));
+    m_dockSettingsBtn->setToolTip(QStringLiteral("Device Settings"));
     m_dockSettingsBtn->setCursor(Qt::PointingHandCursor);
     connect(m_dockSettingsBtn, &QPushButton::clicked, this, [this] {
         toggleSidebar(m_sidebar->isHidden());
     });
 
+    dockLayout->addWidget(m_aspectRatioBtn);
+    dockLayout->addWidget(m_qualityBtn);
+    dockLayout->addWidget(m_filtersBtn);
     dockLayout->addWidget(m_switchCamBtn);
     dockLayout->addWidget(m_shutterBtn);
+    dockLayout->addWidget(m_timerBurstBtn);
+    dockLayout->addWidget(m_denoiseBtn);
+    dockLayout->addWidget(m_togglesBtn);
     dockLayout->addWidget(m_dockSettingsBtn);
 
     dockWrapLayout->addWidget(dock, 0, Qt::AlignCenter);
@@ -499,7 +829,7 @@ void MainWindow::buildUi()
 
     windowLayout->addWidget(body, 1);
 
-    // 4. Slide-Out Settings Sidebar & Backdrop
+    // 4. Slide-Out Settings Sidebar & Backdrop (Hardware & Device controls)
     m_sidebarBackdrop = new QWidget(m_centralRoot);
     m_sidebarBackdrop->setObjectName(QStringLiteral("sidebarBackdrop"));
     m_sidebarBackdrop->hide();
@@ -517,7 +847,7 @@ void MainWindow::buildUi()
     auto *sbHeader = new QWidget(m_sidebar);
     auto *sbHeaderLayout = new QHBoxLayout(sbHeader);
     sbHeaderLayout->setContentsMargins(0, 0, 0, 8);
-    auto *sbTitle = new QLabel(QStringLiteral("Camera Settings"), sbHeader);
+    auto *sbTitle = new QLabel(QStringLiteral("Device Settings"), sbHeader);
     sbTitle->setObjectName(QStringLiteral("sidebarHeaderTitle"));
     auto *closeSbBtn = new QPushButton(sbHeader);
     closeSbBtn->setIcon(icons::closeIcon(QColor(134, 134, 139), 12));
@@ -562,214 +892,12 @@ void MainWindow::buildUi()
     camSecLayout->addWidget(m_deviceStatus);
     contentLay->addWidget(camSection);
 
-    // Aspect Ratio Section
-    auto *arSection = new QWidget(sidebarContent);
-    auto *arLayout = new QVBoxLayout(arSection);
-    arLayout->setContentsMargins(0, 0, 0, 0);
-    arLayout->setSpacing(6);
-    auto *arLbl = new QLabel(QStringLiteral("ASPECT RATIO"), arSection);
-    arLbl->setObjectName(QStringLiteral("fieldLabel"));
-    arLayout->addWidget(arLbl);
-    m_arSegment = new SegmentedControl(arSection);
-    m_arSegment->addSegment(QStringLiteral("Fit"), static_cast<int>(AspectRatioMode::Fit));
-    m_arSegment->addSegment(QStringLiteral("16:9"), static_cast<int>(AspectRatioMode::Ratio16_9));
-    m_arSegment->addSegment(QStringLiteral("4:3"), static_cast<int>(AspectRatioMode::Ratio4_3));
-    m_arSegment->addSegment(QStringLiteral("1:1"), static_cast<int>(AspectRatioMode::Ratio1_1));
-    connect(m_arSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &d) {
-        m_preview->setAspectRatioMode(static_cast<AspectRatioMode>(d.toInt()));
-    });
-    arLayout->addWidget(m_arSegment);
-    contentLay->addWidget(arSection);
-
-    // Quality Section
-    auto *qSection = new QWidget(sidebarContent);
-    auto *qLayout = new QVBoxLayout(qSection);
-    qLayout->setContentsMargins(0, 0, 0, 0);
-    qLayout->setSpacing(6);
-    auto *qLbl = new QLabel(QStringLiteral("QUALITY"), qSection);
-    qLbl->setObjectName(QStringLiteral("fieldLabel"));
-    qLayout->addWidget(qLbl);
-    m_qualitySegment = new SegmentedControl(qSection);
-    m_qualitySegment->addSegment(QStringLiteral("480p"), QSize(640, 480));
-    m_qualitySegment->addSegment(QStringLiteral("720p"), QSize(1280, 720));
-    m_qualitySegment->addSegment(QStringLiteral("1080p"), QSize(1920, 1080));
-    m_qualitySegment->setCurrentIndex(1);
-    connect(m_qualitySegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
-        m_preview->setQualityResolution(v.toSize());
-    });
-    qLayout->addWidget(m_qualitySegment);
-    contentLay->addWidget(qSection);
-
-    // Noise Reduction Section
-    auto *nrSection = new QWidget(sidebarContent);
-    auto *nrLayout = new QVBoxLayout(nrSection);
-    nrLayout->setContentsMargins(0, 0, 0, 0);
-    nrLayout->setSpacing(6);
-    auto *nrLbl = new QLabel(QStringLiteral("NOISE REDUCTION"), nrSection);
-    nrLbl->setObjectName(QStringLiteral("fieldLabel"));
-    nrLayout->addWidget(nrLbl);
-    m_denoiseSegment = new SegmentedControl(nrSection);
-    m_denoiseSegment->addSegment(QStringLiteral("Off"), 0);
-    m_denoiseSegment->addSegment(QStringLiteral("Low"), 1);
-    m_denoiseSegment->addSegment(QStringLiteral("Med"), 2);
-    m_denoiseSegment->addSegment(QStringLiteral("High"), 3);
-
-    QSettings settings(QStringLiteral("c-mi"), QStringLiteral("c-mi"));
-    int savedDenoise = settings.value(QStringLiteral("denoiseLevel"), 0).toInt();
-    m_denoiseLevel = std::clamp(savedDenoise, 0, 3);
-    m_denoiseSegment->setCurrentIndex(m_denoiseLevel);
-    m_preview->setDenoiseLevel(m_denoiseLevel);
-
-    connect(m_denoiseSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
-        m_denoiseLevel = v.toInt();
-        m_preview->setDenoiseLevel(m_denoiseLevel);
-        QSettings s(QStringLiteral("c-mi"), QStringLiteral("c-mi"));
-        s.setValue(QStringLiteral("denoiseLevel"), m_denoiseLevel);
-    });
-    nrLayout->addWidget(m_denoiseSegment);
-    contentLay->addWidget(nrSection);
-
-    // Color Filters Section (3x3 Swatch Grid)
-    auto *fxSection = new QWidget(sidebarContent);
-    auto *fxLayout = new QVBoxLayout(fxSection);
-    fxLayout->setContentsMargins(0, 0, 0, 0);
-    fxLayout->setSpacing(6);
-    auto *fxLbl = new QLabel(QStringLiteral("COLOR FILTERS"), fxSection);
-    fxLbl->setObjectName(QStringLiteral("fieldLabel"));
-    fxLayout->addWidget(fxLbl);
-
-    auto *swatchGrid = new QWidget(fxSection);
-    auto *gridLay = new QGridLayout(swatchGrid);
-    gridLay->setContentsMargins(0, 0, 0, 0);
-    gridLay->setSpacing(6);
-
-    m_fxGroup = new QButtonGroup(this);
-    m_fxGroup->setExclusive(true);
-
-    struct SwatchDef {
-        const char *name;
-        ColorFilter filter;
-        const char *grad;
-    };
-    const SwatchDef swatches[] = {
-        {"None", ColorFilter::None, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #c7c7cc, stop:1 #8e8e93)"},
-        {"Mono", ColorFilter::Grayscale, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6e6e73, stop:1 #1d1d1f)"},
-        {"Sepia", ColorFilter::Sepia, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #c9a06a, stop:1 #8a5a2b)"},
-        {"Cool", ColorFilter::Cool, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #5ac8fa, stop:1 #0071e3)"},
-        {"Warm", ColorFilter::Warm, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ff9f0a, stop:1 #ff375f)"},
-        {"Cyber", ColorFilter::Cyber, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ff007f, stop:1 #00f0ff)"},
-        {"Noir", ColorFilter::Noir, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #000000, stop:1 #434343)"},
-        {"Vintage", ColorFilter::Vintage, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #d4a373, stop:1 #a98467)"},
-        {"Invert", ColorFilter::Invert, "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #11998e, stop:1 #38ef7d)"}
-    };
-
-    for (int i = 0; i < 9; ++i) {
-        auto *btn = new QPushButton(QString::fromLatin1(swatches[i].name), swatchGrid);
-        btn->setCheckable(true);
-        btn->setCursor(Qt::PointingHandCursor);
-        btn->setFixedHeight(32);
-        btn->setStyleSheet(QStringLiteral(
-            "QPushButton {"
-            "  background: %1;"
-            "  border: 2px solid transparent;"
-            "  border-radius: 8px;"
-            "  color: #ffffff;"
-            "  font-size: 10px;"
-            "  font-weight: 700;"
-            "}"
-            "QPushButton:checked {"
-            "  border: 2px solid #0071e3;"
-            "}"
-        ).arg(QString::fromLatin1(swatches[i].grad)));
-
-        m_fxGroup->addButton(btn, static_cast<int>(swatches[i].filter));
-        gridLay->addWidget(btn, i / 3, i % 3);
-        if (i == 0) btn->setChecked(true);
-    }
-
-    connect(m_fxGroup, &QButtonGroup::idClicked, this, [this](int id) {
-        m_preview->setFilter(static_cast<ColorFilter>(id));
-    });
-
-    fxLayout->addWidget(swatchGrid);
-    contentLay->addWidget(fxSection);
-
-    // Timer & Burst Section
-    auto *tbSection = new QWidget(sidebarContent);
-    auto *tbLayout = new QVBoxLayout(tbSection);
-    tbLayout->setContentsMargins(0, 0, 0, 0);
-    tbLayout->setSpacing(6);
-    auto *tbLbl = new QLabel(QStringLiteral("TIMER & BURST"), tbSection);
-    tbLbl->setObjectName(QStringLiteral("fieldLabel"));
-    tbLayout->addWidget(tbLbl);
-
-    m_timerSegment = new SegmentedControl(tbSection);
-    m_timerSegment->addSegment(QStringLiteral("Off"), 0);
-    m_timerSegment->addSegment(QStringLiteral("3s"), 3);
-    m_timerSegment->addSegment(QStringLiteral("5s"), 5);
-    m_timerSegment->addSegment(QStringLiteral("10s"), 10);
-    connect(m_timerSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
-        m_timerDuration = v.toInt();
-    });
-    tbLayout->addWidget(m_timerSegment);
-
-    m_burstSegment = new SegmentedControl(tbSection);
-    m_burstSegment->addSegment(QStringLiteral("1x Shot"), 1);
-    m_burstSegment->addSegment(QStringLiteral("3x Burst"), 3);
-    m_burstSegment->addSegment(QStringLiteral("5x Burst"), 5);
-    connect(m_burstSegment, &SegmentedControl::currentDataChanged, this, [this](const QVariant &v) {
-        m_burstCount = v.toInt();
-    });
-    tbLayout->addWidget(m_burstSegment);
-    contentLay->addWidget(tbSection);
-
-    // Toggles Section
-    auto *togglesSection = new QWidget(sidebarContent);
-    auto *togglesLayout = new QVBoxLayout(togglesSection);
-    togglesLayout->setContentsMargins(0, 0, 0, 0);
-    togglesLayout->setSpacing(8);
-    auto *togLbl = new QLabel(QStringLiteral("TOGGLES"), togglesSection);
-    togLbl->setObjectName(QStringLiteral("fieldLabel"));
-    togglesLayout->addWidget(togLbl);
-
-    auto addToggleRow = [&](const QString &label, ToggleSwitch *&sw, bool defaultChecked, auto callback) {
-        auto *row = new QWidget(togglesSection);
-        auto *rowLay = new QHBoxLayout(row);
-        rowLay->setContentsMargins(0, 0, 0, 0);
-        auto *name = new QLabel(label, row);
-        name->setStyleSheet(QStringLiteral("color: #1d1d1f; font-size: 12px; font-weight: 500;"));
-        sw = new ToggleSwitch(row);
-        sw->setChecked(defaultChecked);
-        connect(sw, &QAbstractButton::toggled, this, callback);
-        rowLay->addWidget(name);
-        rowLay->addStretch();
-        rowLay->addWidget(sw);
-        togglesLayout->addWidget(row);
-    };
-
-    addToggleRow(QStringLiteral("Grid Guide"), m_gridToggle, false, [this](bool on) {
-        m_preview->setShowGrid(on);
-    });
-    addToggleRow(QStringLiteral("Mirror Mode"), m_mirrorToggle, true, [this](bool on) {
-        m_preview->setMirrored(on);
-    });
-    addToggleRow(QStringLiteral("Flash Effect"), m_flashToggle, true, [this](bool on) {
-        m_flashEnabled = on;
-    });
-    addToggleRow(QStringLiteral("Shutter SFX"), m_soundToggle, true, [this](bool on) {
-        m_soundEnabled = on;
-    });
-    addToggleRow(QStringLiteral("Microphone"), m_micToggle, true, [this](bool on) {
-        m_micEnabled = on;
-    });
-    contentLay->addWidget(togglesSection);
-
     // V4L2 Hardware Sliders
     auto *hwSection = new QWidget(sidebarContent);
     auto *hwLayout = new QVBoxLayout(hwSection);
     hwLayout->setContentsMargins(0, 0, 0, 0);
     hwLayout->setSpacing(6);
-    auto *hwLbl = new QLabel(QStringLiteral("DEVICE CONTROLS"), hwSection);
+    auto *hwLbl = new QLabel(QStringLiteral("HARDWARE CONTROLS"), hwSection);
     hwLbl->setObjectName(QStringLiteral("fieldLabel"));
     hwLayout->addWidget(hwLbl);
     m_sliders = new ControlSliders(hwSection);
@@ -785,7 +913,7 @@ void MainWindow::buildUi()
     aboutLbl->setObjectName(QStringLiteral("fieldLabel"));
     aboutSecLayout->addWidget(aboutLbl);
 
-    auto *aboutAppBtn = new QPushButton(QStringLiteral("About Camera Pro"), aboutSection);
+    auto *aboutAppBtn = new QPushButton(QStringLiteral("About C~Mi"), aboutSection);
     aboutAppBtn->setIcon(icons::infoIcon(QColor(29, 29, 31), 16));
     aboutAppBtn->setIconSize(QSize(14, 14));
     aboutAppBtn->setCursor(Qt::PointingHandCursor);
@@ -831,15 +959,15 @@ QMainWindow {
     background: transparent;
 }
 QWidget#windowContainer {
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.12);
+    background: #0d0d0f;
+    border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 18px;
 }
 QWidget#titleBar {
-    background: rgba(255, 255, 255, 0.75);
-    border-top-left-radius: 18px;
-    border-top-right-radius: 18px;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.95);
+    border-top-left-radius: 17px;
+    border-top-right-radius: 17px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
 }
 QPushButton#dotRed {
     background: #ff5f57;
@@ -896,12 +1024,12 @@ QPushButton#headerSettingsBtn:hover {
     background: rgba(0, 0, 0, 0.06);
 }
 QWidget#bodyArea {
-    background: #0d0d0f;
-    border-bottom-left-radius: 18px;
-    border-bottom-right-radius: 18px;
+    background: transparent;
+    border-bottom-left-radius: 17px;
+    border-bottom-right-radius: 17px;
 }
 QWidget#stage {
-    background: #0d0d0f;
+    background: transparent;
 }
 QWidget#frameContainer {
     background: #000000;
@@ -948,9 +1076,9 @@ QPushButton#initBtn:hover {
     background: #f2f2f4;
 }
 QWidget#dockWrap {
-    background: #0d0d0f;
-    border-bottom-left-radius: 18px;
-    border-bottom-right-radius: 18px;
+    background: transparent;
+    border-bottom-left-radius: 17px;
+    border-bottom-right-radius: 17px;
 }
 QWidget#modeSelector {
     background: transparent;
@@ -968,6 +1096,31 @@ QPushButton#modeBtn {
 QPushButton#modeBtn:checked {
     color: #ffffff;
 }
+QWidget#quickControlsBar {
+    background: rgba(24, 24, 28, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 14px;
+}
+QLabel#quickTitleLabel {
+    color: rgba(255, 255, 255, 0.65);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+QPushButton#quickBarCloseBtn {
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    min-height: 22px;
+    max-width: 22px;
+    max-height: 22px;
+    border-radius: 11px;
+    border: none;
+    background: rgba(255, 255, 255, 0.12);
+}
+QPushButton#quickBarCloseBtn:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
 QWidget#dock {
     background: rgba(255, 255, 255, 0.12);
     border: 1px solid rgba(255, 255, 255, 0.18);
@@ -981,13 +1134,17 @@ QPushButton#dockIconBtn {
     max-width: 36px;
     max-height: 36px;
     border-radius: 18px;
-    border: none;
+    border: 1px solid transparent;
     background: rgba(255, 255, 255, 0.12);
     color: #ffffff;
     font-size: 14px;
 }
 QPushButton#dockIconBtn:hover {
     background: rgba(255, 255, 255, 0.25);
+}
+QPushButton#dockIconBtn[active="true"] {
+    background: #0071e3;
+    border: 1px solid rgba(255, 255, 255, 0.4);
 }
 QWidget#sidebarBackdrop {
     background: rgba(0, 0, 0, 0.35);
@@ -1261,6 +1418,7 @@ void MainWindow::toggleSidebar(bool show)
     m_sidebarBackdrop->setGeometry(area);
 
     if (show) {
+        hideQuickPanel();
         m_sidebarBackdrop->show();
         m_sidebarBackdrop->raise();
         m_sidebar->show();
@@ -1290,6 +1448,47 @@ void MainWindow::toggleSidebar(bool show)
         });
         anim->start(QAbstractAnimation::DeleteWhenStopped);
     }
+}
+
+void MainWindow::toggleQuickPanel(QuickPanel panel)
+{
+    if (m_activeQuickPanel == panel) {
+        hideQuickPanel();
+    } else {
+        if (!m_sidebar->isHidden()) {
+            toggleSidebar(false);
+        }
+        m_activeQuickPanel = panel;
+        m_quickControlsStack->setCurrentIndex(static_cast<int>(panel));
+        m_quickControlsBar->show();
+        updateDockButtonStates();
+    }
+}
+
+void MainWindow::hideQuickPanel()
+{
+    m_activeQuickPanel = QuickPanel::None;
+    if (m_quickControlsBar) {
+        m_quickControlsBar->hide();
+    }
+    updateDockButtonStates();
+}
+
+void MainWindow::updateDockButtonStates()
+{
+    auto setBtnActive = [](QPushButton *btn, bool active) {
+        if (!btn) return;
+        btn->setProperty("active", active);
+        btn->style()->unpolish(btn);
+        btn->style()->polish(btn);
+    };
+
+    setBtnActive(m_aspectRatioBtn, m_activeQuickPanel == QuickPanel::AspectRatio);
+    setBtnActive(m_qualityBtn, m_activeQuickPanel == QuickPanel::Quality);
+    setBtnActive(m_filtersBtn, m_activeQuickPanel == QuickPanel::Filters);
+    setBtnActive(m_timerBurstBtn, m_activeQuickPanel == QuickPanel::TimerBurst);
+    setBtnActive(m_denoiseBtn, m_activeQuickPanel == QuickPanel::Denoise);
+    setBtnActive(m_togglesBtn, m_activeQuickPanel == QuickPanel::Toggles);
 }
 
 void MainWindow::setAppMode(AppMode mode)
