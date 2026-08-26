@@ -19,13 +19,13 @@ struct AVAudioFifo;
 namespace cmi {
 
 struct AudioDeviceInfo {
-    QString id;       // Device ID passed to demuxer (e.g. "default", "hw:0,0")
+    QString id;       // Device ID passed to demuxer (e.g. "default", "DummyMic", "plughw:0,0", ":0")
     QString name;     // Friendly display name
-    QString backend;  // "pulse" or "alsa"
+    QString backend;  // "pulse", "alsa", "avfoundation", "dshow"
 };
 
 // Records the active video stream to H264/MP4 via libavformat, muxing audio
-// captured from PulseAudio/PipeWire or ALSA input in a background thread.
+// captured from PulseAudio/PipeWire, ALSA, CoreAudio, or DirectShow in a background thread.
 class VideoEncoder : public QObject {
     Q_OBJECT
 public:
@@ -36,7 +36,11 @@ public:
     bool hasAudio() const { return m_withAudio; }
 
     QString audioDevice() const { return m_audioDevice; }
-    void setAudioDevice(const QString &device) { m_audioDevice = device; }
+    QString audioBackend() const { return m_audioBackend; }
+    void setAudioDevice(const QString &device, const QString &backend = QString()) {
+        m_audioDevice = device;
+        m_audioBackend = backend;
+    }
 
     static QList<AudioDeviceInfo> availableAudioDevices();
     static bool isAudioInputAvailable();
@@ -66,6 +70,7 @@ private:
     std::atomic<bool> m_recording{false};
     bool m_withAudio = false;
     QString m_audioDevice;
+    QString m_audioBackend;
 
     QMutex m_mutex;
     AVFormatContext *m_fmt = nullptr;
@@ -83,7 +88,7 @@ private:
     int64_t m_audioPts = 0;
     int m_fps = 30;
 
-    // Audio capture from default Pulse/PipeWire-pulse source or ALSA.
+    // Audio capture demuxer context
     AVFormatContext *m_audioInput = nullptr;
     std::thread *m_audioThread = nullptr;
     std::atomic<bool> m_audioStop{false};

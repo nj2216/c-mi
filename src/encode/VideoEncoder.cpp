@@ -16,6 +16,26 @@ extern "C" {
 #include <algorithm>
 #include <QFile>
 #include <QTextStream>
+#include <QSet>
+
+#ifdef __linux__
+#include <cstdlib>
+namespace {
+void ensurePulseAudio()
+{
+    static bool checked = false;
+    if (checked) return;
+    checked = true;
+    if (std::system("pulseaudio --check 2>/dev/null") != 0) {
+        // PulseAudio daemon is not running; start user-level PulseAudio with virtual source
+        int res = std::system("pulseaudio --start --exit-idle-time=-1 "
+                              "--load=\"module-null-sink sink_name=DummyOutput sink_properties=device.description='Virtual_Speaker'\" "
+                              "--load=\"module-virtual-source source_name=DummyMic master=DummyOutput.monitor source_properties=device.description='Virtual_Microphone'\" 2>/dev/null");
+        (void)res;
+    }
+}
+} // namespace
+#endif
 
 namespace cmi {
 
@@ -45,6 +65,12 @@ const AVCodec *findVideoEncoder(AVCodecID *outId)
     *outId = AV_CODEC_ID_NONE;
     return nullptr;
 }
+
+static int audioInterruptCallback(void *opaque)
+{
+    auto *stopFlag = static_cast<std::atomic<bool>*>(opaque);
+    return (stopFlag && stopFlag->load()) ? 1 : 0;
+}
 } // namespace
 
 VideoEncoder::VideoEncoder(QObject *parent) : QObject(parent) {}
@@ -56,21 +82,101 @@ VideoEncoder::~VideoEncoder()
 
 QList<AudioDeviceInfo> VideoEncoder::availableAudioDevices()
 {
+#ifdef __linux__
+    ensurePulseAudio();
+#endif
     avdevice_register_all();
     QList<AudioDeviceInfo> list;
+    QSet<QString> seenIds;
 
-    // Check pulse backend
-    if (av_find_input_format("pulse")) {
-        list.append({QStringLiteral("default"),
-                     QStringLiteral("Default Microphone (PulseAudio / PipeWire)"),
-                     QStringLiteral("pulse")});
+    // Helper to query avdevice_list_input_sources
+    auto probeBackend = [&](const char *backendName, const QString &friendlyBackend) {
+        const AVInputFormat *fmt = av_find_input_format(backendName);
+        if (!fmt)
+            return;
+
+        AVDeviceInfoList *devList = nullptr;
+        int ret = avdevice_list_input_sources(fmt, nullptr, nullptr, &devList);
+        if (ret >= 0 && devList && devList->nb_devices > 0) {
+            for (int i = 0; i < devList->nb_devices; ++i) {
+                const AVDeviceInfo *dev = devList->devices[i];
+                if (!dev || !dev->device_name)
+                    continue;
+
+                QString devName = QString::fromUtf8(dev->device_name);
+                QString bName = QString::fromUtf8(backendName);
+
+                // Filter out non-capture plugins on ALSA
+                if (bName == QStringLiteral("alsa")) {
+                    if (devName == QStringLiteral("null") ||
+                        devName == QStringLiteral("lavrate") ||
+                        devName == QStringLiteral("samplerate") ||
+                        devName == QStringLiteral("speexrate") ||
+                        devName == QStringLiteral("speex") ||
+                        devName == QStringLiteral("upmix") ||
+                        devName == QStringLiteral("vdownmix")) {
+                        continue;
+                    }
+                }
+
+                if (devName == QStringLiteral("null"))
+                    continue;
+
+                QString uniqueKey = QStringLiteral("%1:%2").arg(bName, devName);
+                if (seenIds.contains(uniqueKey))
+                    continue;
+                seenIds.insert(uniqueKey);
+
+                QString devDesc = dev->device_description
+                    ? QString::fromUtf8(dev->device_description)
+                    : devName;
+
+                QString displayName = QStringLiteral("%1 [%2]").arg(devDesc, friendlyBackend);
+                list.append({devName, displayName, bName});
+            }
+            avdevice_free_list_devices(&devList);
+        }
+    };
+
+    // 1. Probe PulseAudio / PipeWire
+    probeBackend("pulse", QStringLiteral("PulseAudio / PipeWire"));
+
+    // 2. Probe ALSA
+    probeBackend("alsa", QStringLiteral("ALSA"));
+
+    // 3. Probe macOS AVFoundation
+    probeBackend("avfoundation", QStringLiteral("CoreAudio"));
+
+    // 4. Probe Windows DirectShow
+    probeBackend("dshow", QStringLiteral("DirectShow"));
+
+    // Fallbacks if dynamic listing was empty or partial
+    if (const AVInputFormat *pulse = av_find_input_format("pulse")) {
+        QString uniqueKey = QStringLiteral("pulse:default");
+        if (!seenIds.contains(uniqueKey)) {
+            AVFormatContext *ctx = nullptr;
+            if (avformat_open_input(&ctx, "default", pulse, nullptr) == 0) {
+                if (ctx) avformat_close_input(&ctx);
+                seenIds.insert(uniqueKey);
+                list.prepend({QStringLiteral("default"),
+                              QStringLiteral("Default Microphone [PulseAudio / PipeWire]"),
+                              QStringLiteral("pulse")});
+            }
+        }
     }
 
-    // Check alsa backend
-    if (av_find_input_format("alsa")) {
-        list.append({QStringLiteral("default"),
-                     QStringLiteral("Default Microphone (ALSA)"),
-                     QStringLiteral("alsa")});
+    if (const AVInputFormat *alsa = av_find_input_format("alsa")) {
+        QString uniqueKey = QStringLiteral("alsa:default");
+        if (!seenIds.contains(uniqueKey)) {
+            AVFormatContext *ctx = nullptr;
+            if (avformat_open_input(&ctx, "default", alsa, nullptr) == 0) {
+                if (ctx) avformat_close_input(&ctx);
+                seenIds.insert(uniqueKey);
+                list.append({QStringLiteral("default"),
+                             QStringLiteral("Default Microphone [ALSA]"),
+                             QStringLiteral("alsa")});
+            }
+        }
 
         // Query ALSA capture devices from procfs if available
         QFile pcmFile(QStringLiteral("/proc/asound/pcm"));
@@ -79,7 +185,6 @@ QList<AudioDeviceInfo> VideoEncoder::availableAudioDevices()
             while (!ts.atEnd()) {
                 QString line = ts.readLine();
                 if (line.contains(QStringLiteral("capture"), Qt::CaseInsensitive)) {
-                    // Line format: "00-00: ALC892 Analog : ALC892 Analog : playback 1 : capture 1"
                     QStringList parts = line.split(QLatin1Char(':'));
                     if (parts.size() >= 2) {
                         QString cardDev = parts[0].trimmed();
@@ -88,14 +193,38 @@ QList<AudioDeviceInfo> VideoEncoder::availableAudioDevices()
                         if (cd.size() == 2) {
                             int card = cd[0].toInt();
                             int dev = cd[1].toInt();
-                            QString hwId = QStringLiteral("hw:%1,%2").arg(card).arg(dev);
-                            list.append({hwId,
-                                         QStringLiteral("%1 (%2)").arg(name, hwId),
-                                         QStringLiteral("alsa")});
+                            QString plugId = QStringLiteral("plughw:%1,%2").arg(card).arg(dev);
+                            QString k = QStringLiteral("alsa:%1").arg(plugId);
+                            if (!seenIds.contains(k)) {
+                                seenIds.insert(k);
+                                list.append({plugId,
+                                             QStringLiteral("%1 (%2) [ALSA]").arg(name, plugId),
+                                             QStringLiteral("alsa")});
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+
+    if (av_find_input_format("avfoundation")) {
+        QString uniqueKey = QStringLiteral("avfoundation::default");
+        if (!seenIds.contains(uniqueKey)) {
+            seenIds.insert(uniqueKey);
+            list.append({QStringLiteral(":default"),
+                         QStringLiteral("Default Microphone [macOS CoreAudio]"),
+                         QStringLiteral("avfoundation")});
+        }
+    }
+
+    if (av_find_input_format("dshow")) {
+        QString uniqueKey = QStringLiteral("dshow:audio=default");
+        if (!seenIds.contains(uniqueKey)) {
+            seenIds.insert(uniqueKey);
+            list.append({QStringLiteral("audio=default"),
+                         QStringLiteral("Default Microphone [Windows DirectShow]"),
+                         QStringLiteral("dshow")});
         }
     }
 
@@ -230,21 +359,15 @@ bool VideoEncoder::initAudioStream()
     return true;
 }
 
-namespace {
-static int audioInterruptCallback(void *opaque)
-{
-    auto *stopFlag = static_cast<std::atomic<bool>*>(opaque);
-    return (stopFlag && stopFlag->load()) ? 1 : 0;
-}
-} // namespace
-
 bool VideoEncoder::openAudioInput()
 {
+#ifdef __linux__
+    ensurePulseAudio();
+#endif
     avdevice_register_all();
 
     QString deviceToOpen = m_audioDevice.trimmed();
-    if (deviceToOpen.isEmpty())
-        deviceToOpen = QStringLiteral("default");
+    QString backendToUse = m_audioBackend.trimmed();
 
     QString chosenBackend;
 
@@ -276,15 +399,24 @@ bool VideoEncoder::openAudioInput()
         return false;
     };
 
-    if (deviceToOpen.startsWith(QStringLiteral("hw:")) || deviceToOpen.startsWith(QStringLiteral("plughw:"))) {
-        tryOpen("alsa", deviceToOpen);
-    } else if (deviceToOpen == QStringLiteral("default")) {
-        if (!tryOpen("pulse", QStringLiteral("default"))) {
-            tryOpen("alsa", QStringLiteral("default"));
-        }
-    } else {
-        if (!tryOpen("pulse", deviceToOpen)) {
+    // If specific backend & device was selected, try it first
+    if (!backendToUse.isEmpty() && !deviceToOpen.isEmpty()) {
+        tryOpen(backendToUse.toUtf8().constData(), deviceToOpen);
+    }
+
+    // Otherwise, automatic fallback sequence
+    if (!m_audioInput) {
+        if (!deviceToOpen.isEmpty() && (deviceToOpen.startsWith(QLatin1String("hw:")) || deviceToOpen.startsWith(QLatin1String("plughw:")))) {
             tryOpen("alsa", deviceToOpen);
+        } else {
+            QString target = deviceToOpen.isEmpty() ? QStringLiteral("default") : deviceToOpen;
+            if (!tryOpen("pulse", target)) {
+                if (!tryOpen("alsa", target)) {
+                    if (!tryOpen("avfoundation", deviceToOpen.isEmpty() ? QStringLiteral(":default") : deviceToOpen)) {
+                        tryOpen("dshow", deviceToOpen.isEmpty() ? QStringLiteral("audio=default") : deviceToOpen);
+                    }
+                }
+            }
         }
     }
 
@@ -293,11 +425,13 @@ bool VideoEncoder::openAudioInput()
         return false;
     }
 
-    if (avformat_find_stream_info(m_audioInput, nullptr) < 0 || m_audioInput->nb_streams == 0) {
-        emit audioInputFailed(QStringLiteral("Cannot read audio input stream info"));
-        avformat_close_input(&m_audioInput);
-        m_audioInput = nullptr;
-        return false;
+    if (m_audioInput->nb_streams == 0) {
+        if (avformat_find_stream_info(m_audioInput, nullptr) < 0 || m_audioInput->nb_streams == 0) {
+            emit audioInputFailed(QStringLiteral("Cannot read audio input stream info"));
+            avformat_close_input(&m_audioInput);
+            m_audioInput = nullptr;
+            return false;
+        }
     }
 
     AVStream *inSt = m_audioInput->streams[0];
@@ -367,7 +501,8 @@ bool VideoEncoder::openAudioInput()
         return false;
     }
 
-    emit audioInputOpened(QStringLiteral("%1 [%2]").arg(deviceToOpen, chosenBackend));
+    QString openedName = deviceToOpen.isEmpty() ? QStringLiteral("default") : deviceToOpen;
+    emit audioInputOpened(QStringLiteral("%1 [%2]").arg(openedName, chosenBackend));
     return true;
 }
 

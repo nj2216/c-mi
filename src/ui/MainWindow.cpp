@@ -1573,7 +1573,14 @@ void MainWindow::updateAudioDevices()
 {
     if (!m_audioCombo) return;
 
-    const QString prevId = m_audioCombo->currentData().toString();
+    QString prevId;
+    QVariant prevData = m_audioCombo->currentData();
+    if (prevData.canConvert<QVariantList>()) {
+        QVariantList l = prevData.toList();
+        if (!l.isEmpty()) prevId = l[0].toString();
+    } else {
+        prevId = prevData.toString();
+    }
 
     m_audioCombo->blockSignals(true);
     m_audioCombo->clear();
@@ -1589,7 +1596,7 @@ void MainWindow::updateAudioDevices()
         int selectIdx = 0;
         for (int i = 0; i < devices.size(); ++i) {
             const auto &dev = devices[i];
-            m_audioCombo->addItem(dev.name, dev.id);
+            m_audioCombo->addItem(dev.name, QVariantList{dev.id, dev.backend});
             if (!prevId.isEmpty() && dev.id == prevId) {
                 selectIdx = i;
             }
@@ -1610,8 +1617,15 @@ void MainWindow::updateAudioDevices()
 void MainWindow::onAudioDeviceSelected(int index)
 {
     if (index < 0 || !m_audioCombo) return;
-    const QString id = m_audioCombo->itemData(index).toString();
-    m_encoder->setAudioDevice(id);
+    QVariant data = m_audioCombo->itemData(index);
+    if (data.canConvert<QVariantList>()) {
+        QVariantList l = data.toList();
+        if (l.size() >= 2) {
+            m_encoder->setAudioDevice(l[0].toString(), l[1].toString());
+            return;
+        }
+    }
+    m_encoder->setAudioDevice(data.toString());
 }
 
 void MainWindow::onAudioInputOpened(const QString &deviceName)
