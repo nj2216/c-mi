@@ -3,11 +3,14 @@
 # distributable tarball, bundling install.sh for a non-sudo user install.
 set -euo pipefail
 
-BUILD_DIR="${BUILD_DIR:-build}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
 BINARY="${BINARY:-$BUILD_DIR/c-mi}"
-VERSION="${VERSION:-$(sed -n 's/^project(c-mi VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)}"
+VERSION="${VERSION:-$(sed -n 's/^project(c-mi VERSION \([0-9.]*\).*/\1/p' "$ROOT_DIR/CMakeLists.txt")}"
 ARCH="$(uname -m)"
-DIST_DIR="${DIST_DIR:-dist}"
+DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 STAGE_NAME="c-mi-${VERSION}-linux-${ARCH}"
 STAGE_DIR="$DIST_DIR/$STAGE_NAME"
 
@@ -16,12 +19,21 @@ if [[ ! -x "$BINARY" ]]; then
     exit 1
 fi
 
+mkdir -p "$DIST_DIR"
 rm -rf "$STAGE_DIR"
 install -Dm755 "$BINARY" "$STAGE_DIR/bin/c-mi"
-install -Dm644 data/c-mi.desktop "$STAGE_DIR/share/applications/c-mi.desktop"
-install -Dm644 data/icons/c-mi.svg "$STAGE_DIR/share/icons/hicolor/scalable/apps/c-mi.svg"
-install -Dm644 /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf "$STAGE_DIR/lib/c-mi/DejaVuSansMono.ttf"
-install -Dm755 toolchain/install.sh "$STAGE_DIR/install.sh"
+install -Dm644 "$ROOT_DIR/data/c-mi.desktop" "$STAGE_DIR/share/applications/c-mi.desktop"
+install -Dm644 "$ROOT_DIR/data/icons/c-mi.svg" "$STAGE_DIR/share/icons/hicolor/scalable/apps/c-mi.svg"
+
+if [[ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ]]; then
+    install -Dm644 /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf "$STAGE_DIR/lib/c-mi/DejaVuSansMono.ttf"
+fi
+
+if [[ -f "$ROOT_DIR/install.sh" ]]; then
+    install -Dm755 "$ROOT_DIR/install.sh" "$STAGE_DIR/install.sh"
+elif [[ -f "$SCRIPT_DIR/install.sh" ]]; then
+    install -Dm755 "$SCRIPT_DIR/install.sh" "$STAGE_DIR/install.sh"
+fi
 
 # Bundle shared library dependencies that aren't guaranteed to exist on the
 # target machine (e.g. libxcb-cursor), so the binary works even without
@@ -36,8 +48,17 @@ while read -r lib_name lib_path; do
     fi
 done
 
-tar -C "$DIST_DIR" -czf "$DIST_DIR/$STAGE_NAME.tar.gz" "$STAGE_NAME"
+TARBALL="$DIST_DIR/$STAGE_NAME.tar.gz"
+tar -C "$DIST_DIR" -czf "$TARBALL" "$STAGE_NAME"
 rm -rf "$STAGE_DIR"
 
-echo "Package ready: $DIST_DIR/$STAGE_NAME.tar.gz"
+# Generate SHA256 checksum
+(cd "$DIST_DIR" && sha256sum "$STAGE_NAME.tar.gz" > "$STAGE_NAME.tar.gz.sha256")
+
+# Also create generic alias c-mi-linux-${ARCH}.tar.gz
+cp -f "$TARBALL" "$DIST_DIR/c-mi-linux-${ARCH}.tar.gz"
+(cd "$DIST_DIR" && sha256sum "c-mi-linux-${ARCH}.tar.gz" > "c-mi-linux-${ARCH}.tar.gz.sha256")
+
+echo "Package ready: $TARBALL"
+echo "Checksum: $(cat "$TARBALL.sha256")"
 echo "Users install with: tar -xzf $STAGE_NAME.tar.gz && ./$STAGE_NAME/install.sh"

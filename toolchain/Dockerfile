@@ -6,9 +6,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake build-essential ca-certificates cmake curl file \
-    libdbus-1-dev libfontconfig1-dev libfreetype6-dev libgl-dev \
+    libasound2-dev libdbus-1-dev libfontconfig1-dev libfreetype6-dev libgl-dev \
     libglib2.0-dev libice-dev libinput-dev libjpeg-dev \
-    libpng-dev libsm-dev libx11-dev libx11-xcb-dev libxcb1-dev \
+    libpng-dev libpulse-dev libsm-dev libv4l-dev libx11-dev libx11-xcb-dev libxcb1-dev \
     libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev \
     libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev \
     libxcb-render-util0-dev libxcb-render0-dev libxcb-shape0-dev \
@@ -35,7 +35,8 @@ RUN curl -fsSLO https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cd ffmpeg-${FFMPEG_VERSION} \
     && ./configure --prefix=/opt/cmi-static --disable-shared --enable-static \
         --disable-programs --disable-doc --disable-debug --disable-network \
-        --disable-autodetect --enable-pic \
+        --enable-avdevice --enable-indev=v4l2 --enable-indev=pulse --enable-indev=alsa \
+        --enable-pic \
     && make -j"$(nproc)" \
     && make install
 

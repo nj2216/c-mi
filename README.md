@@ -100,19 +100,41 @@ the `.desktop`/icon files, and a bundled `install.sh`.
 
 ### Installing without sudo
 
-Users can install the package into `~/.local` without root:
+#### Quick Install (One-Liner)
+
+Download and install the latest release directly to `~/.local` (no root required):
 
 ```sh
-tar -xzf c-mi-<version>-linux-<arch>.tar.gz
-./c-mi-<version>-linux-<arch>/install.sh
+curl -fsSL https://raw.githubusercontent.com/nj2216/c-mi/main/install.sh | bash
 ```
 
-This installs to `~/.local/bin`, `~/.local/share/applications`, and
-`~/.local/share/icons/hicolor/scalable/apps` (override with `PREFIX`). Add
-`~/.local/bin` to `PATH` if it isn't already, if prompted. Remove with:
+Or install a specific version:
 
 ```sh
-./c-mi-<version>-linux-<arch>/install.sh --uninstall
+curl -fsSL https://raw.githubusercontent.com/nj2216/c-mi/main/install.sh | bash -s -- -v v0.1.0
+```
+
+#### Install from Release Tarball
+
+Download `c-mi-linux-x86_64.tar.gz` from [GitHub Releases](https://github.com/nj2216/c-mi/releases), extract, and run `install.sh`:
+
+```sh
+tar -xzf c-mi-*-linux-x86_64.tar.gz
+cd c-mi-*-linux-x86_64
+./install.sh
+```
+
+This installs to `~/.local/bin/c-mi`, `~/.local/share/applications/c-mi.desktop`, and
+`~/.local/share/icons/hicolor/scalable/apps/c-mi.svg` (override directory with `--prefix <dir>`).
+
+#### Uninstall
+
+To cleanly remove c~mi:
+
+```sh
+./install.sh --uninstall
+# or via one-liner:
+curl -fsSL https://raw.githubusercontent.com/nj2216/c-mi/main/install.sh | bash -s -- --uninstall
 ```
 
 ## Features
