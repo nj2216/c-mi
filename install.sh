@@ -7,7 +7,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/nj2216/c-mi/main/install.sh | bash
 #
 # Specific Version:
-#   curl -fsSL https://raw.githubusercontent.com/nj2216/c-mi/main/install.sh | bash -s -- -v v0.1.0
+#   curl -fsSL https://raw.githubusercontent.com/nj2216/c-mi/main/install.sh | bash -s -- -v v0.3.2
+#
+# Custom Prefix:
+#   curl -fsSL https://raw.githubusercontent.com/nj2216/c-mi/main/install.sh | bash -s -- -p ~/.myapps
 #
 # Uninstall:
 #   curl -fsSL https://raw.githubusercontent.com/nj2216/c-mi/main/install.sh | bash -s -- --uninstall
@@ -45,21 +48,24 @@ log_error()   { echo -e "${RED}${BOLD}[c~mi] ✗${RESET} $*" >&2; }
 
 show_help() {
     cat << EOF
-c~mi Installer
+c~mi Installer (No sudo required)
 
 USAGE:
   install.sh [OPTIONS]
 
 OPTIONS:
-  -p, --prefix <DIR>     Installation directory prefix (default: \$HOME/.local)
-  -v, --version <TAG>    Install a specific release version (e.g. v0.1.0)
+  -p, --prefix <DIR>      Installation directory prefix (default: \$HOME/.local)
+  -v, --version <TAG>     Install a specific release version (e.g. v0.3.2)
   -r, --repo <OWNER/REPO> GitHub repository (default: nj2216/c-mi)
-  -u, --uninstall        Uninstall c~mi from prefix
-  -h, --help             Show this help message
+  -u, --uninstall         Uninstall c~mi from prefix
+  -h, --help              Show this help message
 
 EXAMPLES:
   # Install latest release
-  ./install.sh
+  curl -fsSL https://raw.githubusercontent.com/nj2216/c-mi/main/install.sh | bash
+
+  # Install specific version
+  curl -fsSL https://raw.githubusercontent.com/nj2216/c-mi/main/install.sh | bash -s -- -v v0.3.2
 
   # Install to custom directory without root
   ./install.sh --prefix /opt/my-apps
@@ -123,7 +129,7 @@ if [[ "$UNINSTALL" == true ]]; then
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" 2>/dev/null || true
     command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f -t "$PREFIX/share/icons/hicolor" 2>/dev/null || true
 
-    log_success "c~mi has been successfully uninstalled."
+    log_success "c~mi has been successfully uninstalled from $PREFIX."
     exit 0
 fi
 
@@ -150,7 +156,7 @@ case "$ARCH" in
 esac
 
 # ------------------------------------------------------------------------------
-# Helper: Download utility
+# Helper: Download utilities
 # ------------------------------------------------------------------------------
 download_file() {
     local url="$1"
@@ -168,30 +174,32 @@ download_file() {
 fetch_json() {
     local url="$1"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -H "Accept: application/vnd.github.v3+json" "$url"
+        curl -fsSL -H "Accept: application/vnd.github.v3+json" "$url" 2>/dev/null || true
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO- --header="Accept: application/vnd.github.v3+json" "$url"
+        wget -qO- --header="Accept: application/vnd.github.v3+json" "$url" 2>/dev/null || true
     fi
 }
 
 # ------------------------------------------------------------------------------
-# Determine Install Source (Local extracted dir vs Remote GitHub download)
+# Determine Install Mode: Local file execution vs Remote GitHub download
 # ------------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
-LOCAL_BIN=""
+IS_PIPED=false
+if [[ -z "${BASH_SOURCE[0]:-}" ]] || [[ "${BASH_SOURCE[0]}" == "bash" ]] || [[ "${BASH_SOURCE[0]}" == "-" ]] || [[ "${BASH_SOURCE[0]}" =~ ^/dev/fd/ ]] || [[ "${BASH_SOURCE[0]}" =~ ^/proc/self/fd/ ]]; then
+    IS_PIPED=true
+fi
 
-if [[ -n "$SCRIPT_DIR" ]] && [[ -f "$SCRIPT_DIR/bin/c-mi" ]]; then
-    LOCAL_BIN="$SCRIPT_DIR"
-elif [[ -n "$SCRIPT_DIR" ]] && [[ -f "$SCRIPT_DIR/build/c-mi" ]]; then
-    LOCAL_BIN="$SCRIPT_DIR/build"
-elif [[ -n "$SCRIPT_DIR" ]] && [[ -f "$SCRIPT_DIR/build-static/c-mi" ]]; then
-    LOCAL_BIN="$SCRIPT_DIR/build-static"
-elif [[ -n "$SCRIPT_DIR" ]] && [[ -f "$SCRIPT_DIR/c-mi" ]]; then
-    LOCAL_BIN="$SCRIPT_DIR"
-elif [[ -f "./bin/c-mi" ]]; then
-    LOCAL_BIN="$(pwd)"
-elif [[ -f "./build/c-mi" ]]; then
-    LOCAL_BIN="$(pwd)/build"
+SCRIPT_DIR=""
+if [[ "$IS_PIPED" == false ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+fi
+
+LOCAL_BIN=""
+if [[ "$IS_PIPED" == false && -n "$SCRIPT_DIR" ]]; then
+    if [[ -f "$SCRIPT_DIR/bin/c-mi" ]]; then
+        LOCAL_BIN="$SCRIPT_DIR"
+    elif [[ -f "$SCRIPT_DIR/c-mi" && ! -d "$SCRIPT_DIR/c-mi" ]]; then
+        LOCAL_BIN="$SCRIPT_DIR"
+    fi
 fi
 
 TEMP_DIR=""
@@ -202,11 +210,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+FOUND_BIN=""
 SRC_ROOT=""
 
 if [[ -n "$LOCAL_BIN" ]]; then
     log_info "Installing from local package at: ${LOCAL_BIN}"
     SRC_ROOT="$LOCAL_BIN"
+    if [[ -f "$SRC_ROOT/bin/c-mi" ]]; then
+        FOUND_BIN="$SRC_ROOT/bin/c-mi"
+    elif [[ -f "$SRC_ROOT/c-mi" ]]; then
+        FOUND_BIN="$SRC_ROOT/c-mi"
+    fi
 else
     # --------------------------------------------------------------------------
     # Remote Download from GitHub Releases
@@ -221,27 +235,29 @@ else
         API_URL="https://api.github.com/repos/${REPO}/releases/latest"
     fi
 
-    RELEASE_JSON="$(fetch_json "$API_URL" || true)"
+    RELEASE_JSON="$(fetch_json "$API_URL")"
     DOWNLOAD_URL=""
     TAG_NAME=""
 
     if [[ -n "$RELEASE_JSON" ]]; then
         TAG_NAME="$(echo "$RELEASE_JSON" | grep -o '"tag_name": *"[^"]*"' | head -n1 | cut -d'"' -f4 || true)"
-        # Try finding asset matching linux and architecture
+        # Prefer specific architecture matching tarball
         DOWNLOAD_URL="$(echo "$RELEASE_JSON" | grep -o '"browser_download_url": *"[^"]*"' | cut -d'"' -f4 | grep -i "linux" | grep -i "${ARCH_MATCH}" | grep -E "\.tar\.gz$" | head -n1 || true)"
         if [[ -z "$DOWNLOAD_URL" ]]; then
             DOWNLOAD_URL="$(echo "$RELEASE_JSON" | grep -o '"browser_download_url": *"[^"]*"' | cut -d'"' -f4 | grep -E "\.tar\.gz$" | head -n1 || true)"
         fi
     fi
 
-    # Fallback to direct URL if API rate-limited or JSON parsing failed
+    # Fallback to direct release URLs if API is rate-limited or JSON unparsed
     if [[ -z "$DOWNLOAD_URL" ]]; then
         if [[ -n "$REQUESTED_VERSION" ]]; then
             TAG_NAME="$REQUESTED_VERSION"
+            [[ "$TAG_NAME" != v* ]] && TAG_NAME="v$TAG_NAME"
+            DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/c-mi-${TAG_NAME#v}-linux-${ARCH_MATCH}.tar.gz"
         else
             TAG_NAME="latest"
+            DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/c-mi-linux-${ARCH_MATCH}.tar.gz"
         fi
-        DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/c-mi-${TAG_NAME}-linux-${ARCH_MATCH}.tar.gz"
     fi
 
     log_info "Downloading c~mi ${TAG_NAME:-release} for ${ARCH_MATCH}..."
@@ -249,26 +265,33 @@ else
     TARBALL_PATH="$TEMP_DIR/c-mi.tar.gz"
 
     if ! download_file "$DOWNLOAD_URL" "$TARBALL_PATH"; then
-        # Try generic fallback URL
+        # Try generic alias fallback URL
         ALT_URL="https://github.com/${REPO}/releases/latest/download/c-mi-linux-${ARCH_MATCH}.tar.gz"
-        log_warn "Download failed from $DOWNLOAD_URL, trying $ALT_URL..."
-        download_file "$ALT_URL" "$TARBALL_PATH" || {
+        if [[ "$DOWNLOAD_URL" != "$ALT_URL" ]]; then
+            log_warn "Download from $DOWNLOAD_URL failed, trying $ALT_URL..."
+            download_file "$ALT_URL" "$TARBALL_PATH" || {
+                log_error "Failed to download release tarball from GitHub."
+                log_error "Please verify releases at: https://github.com/${REPO}/releases"
+                exit 1
+            }
+        else
             log_error "Failed to download release tarball from GitHub."
-            log_error "Please check your internet connection or verify releases at: https://github.com/${REPO}/releases"
+            log_error "Please verify releases at: https://github.com/${REPO}/releases"
             exit 1
-        }
+        fi
     fi
 
     log_info "Extracting release package..."
     tar -xzf "$TARBALL_PATH" -C "$TEMP_DIR"
 
-    # Locate extracted directory
-    EXTRACTED_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 2 -type f -name "c-mi" -exec dirname {} \; | head -n1 || true)"
-    if [[ -n "$EXTRACTED_DIR" ]]; then
-        if [[ "$(basename "$EXTRACTED_DIR")" == "bin" ]]; then
-            SRC_ROOT="$(dirname "$EXTRACTED_DIR")"
+    # Search for executable binary inside extracted directory (no depth limit)
+    FOUND_BIN="$(find "$TEMP_DIR" -type f \( -name "c-mi" -o -name "c-mi.bin" \) ! -name "*.sh" ! -name "*.desktop" ! -name "*.svg" ! -name "*.png" 2>/dev/null | head -n1 || true)"
+    if [[ -n "$FOUND_BIN" ]]; then
+        BIN_PARENT="$(dirname "$FOUND_BIN")"
+        if [[ "$(basename "$BIN_PARENT")" == "bin" ]]; then
+            SRC_ROOT="$(dirname "$BIN_PARENT")"
         else
-            SRC_ROOT="$EXTRACTED_DIR"
+            SRC_ROOT="$BIN_PARENT"
         fi
     else
         SRC_ROOT="$TEMP_DIR"
@@ -283,7 +306,9 @@ log_info "Installing c~mi into ${PREFIX}..."
 mkdir -p "$BIN_DIR" "$APPS_DIR" "$ICONS_DIR"
 
 # 1. Binary
-if [[ -f "$SRC_ROOT/bin/c-mi" ]]; then
+if [[ -n "$FOUND_BIN" && -f "$FOUND_BIN" ]]; then
+    install -Dm755 "$FOUND_BIN" "$BIN_DIR/c-mi"
+elif [[ -f "$SRC_ROOT/bin/c-mi" ]]; then
     install -Dm755 "$SRC_ROOT/bin/c-mi" "$BIN_DIR/c-mi"
 elif [[ -f "$SRC_ROOT/c-mi" ]]; then
     install -Dm755 "$SRC_ROOT/c-mi" "$BIN_DIR/c-mi"
@@ -293,27 +318,44 @@ else
 fi
 
 # 2. Bundled Shared Libraries & Font (if any)
+FOUND_LIB_DIR=""
 if [[ -d "$SRC_ROOT/lib/c-mi" ]]; then
+    FOUND_LIB_DIR="$SRC_ROOT/lib/c-mi"
+elif [[ -n "$TEMP_DIR" ]]; then
+    FOUND_LIB_DIR="$(find "$TEMP_DIR" -type d -path "*/lib/c-mi" 2>/dev/null | head -n1 || true)"
+fi
+
+if [[ -n "$FOUND_LIB_DIR" && -d "$FOUND_LIB_DIR" ]]; then
     mkdir -p "$LIB_DIR"
-    cp -rf "$SRC_ROOT"/lib/c-mi/* "$LIB_DIR/"
+    cp -rf "$FOUND_LIB_DIR"/* "$LIB_DIR/" 2>/dev/null || true
 fi
 
 # 3. Desktop Entry
+FOUND_DESKTOP=""
 if [[ -f "$SRC_ROOT/share/applications/c-mi.desktop" ]]; then
-    install -Dm644 "$SRC_ROOT/share/applications/c-mi.desktop" "$APPS_DIR/c-mi.desktop"
+    FOUND_DESKTOP="$SRC_ROOT/share/applications/c-mi.desktop"
 elif [[ -f "$SRC_ROOT/data/c-mi.desktop" ]]; then
-    install -Dm644 "$SRC_ROOT/data/c-mi.desktop" "$APPS_DIR/c-mi.desktop"
-elif [[ -f "$SCRIPT_DIR/data/c-mi.desktop" ]]; then
-    install -Dm644 "$SCRIPT_DIR/data/c-mi.desktop" "$APPS_DIR/c-mi.desktop"
+    FOUND_DESKTOP="$SRC_ROOT/data/c-mi.desktop"
+elif [[ -n "$TEMP_DIR" ]]; then
+    FOUND_DESKTOP="$(find "$TEMP_DIR" -type f -name "c-mi.desktop" 2>/dev/null | head -n1 || true)"
+fi
+
+if [[ -n "$FOUND_DESKTOP" && -f "$FOUND_DESKTOP" ]]; then
+    install -Dm644 "$FOUND_DESKTOP" "$APPS_DIR/c-mi.desktop"
 fi
 
 # 4. Icon
+FOUND_ICON=""
 if [[ -f "$SRC_ROOT/share/icons/hicolor/scalable/apps/c-mi.svg" ]]; then
-    install -Dm644 "$SRC_ROOT/share/icons/hicolor/scalable/apps/c-mi.svg" "$ICONS_DIR/c-mi.svg"
+    FOUND_ICON="$SRC_ROOT/share/icons/hicolor/scalable/apps/c-mi.svg"
 elif [[ -f "$SRC_ROOT/data/icons/c-mi.svg" ]]; then
-    install -Dm644 "$SRC_ROOT/data/icons/c-mi.svg" "$ICONS_DIR/c-mi.svg"
-elif [[ -f "$SCRIPT_DIR/data/icons/c-mi.svg" ]]; then
-    install -Dm644 "$SCRIPT_DIR/data/icons/c-mi.svg" "$ICONS_DIR/c-mi.svg"
+    FOUND_ICON="$SRC_ROOT/data/icons/c-mi.svg"
+elif [[ -n "$TEMP_DIR" ]]; then
+    FOUND_ICON="$(find "$TEMP_DIR" -type f -name "c-mi.svg" 2>/dev/null | head -n1 || true)"
+fi
+
+if [[ -n "$FOUND_ICON" && -f "$FOUND_ICON" ]]; then
+    install -Dm644 "$FOUND_ICON" "$ICONS_DIR/c-mi.svg"
 fi
 
 # Update desktop and icon databases
