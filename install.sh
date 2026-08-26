@@ -182,10 +182,16 @@ LOCAL_BIN=""
 
 if [[ -n "$SCRIPT_DIR" ]] && [[ -f "$SCRIPT_DIR/bin/c-mi" ]]; then
     LOCAL_BIN="$SCRIPT_DIR"
+elif [[ -n "$SCRIPT_DIR" ]] && [[ -f "$SCRIPT_DIR/build/c-mi" ]]; then
+    LOCAL_BIN="$SCRIPT_DIR/build"
+elif [[ -n "$SCRIPT_DIR" ]] && [[ -f "$SCRIPT_DIR/build-static/c-mi" ]]; then
+    LOCAL_BIN="$SCRIPT_DIR/build-static"
 elif [[ -n "$SCRIPT_DIR" ]] && [[ -f "$SCRIPT_DIR/c-mi" ]]; then
     LOCAL_BIN="$SCRIPT_DIR"
 elif [[ -f "./bin/c-mi" ]]; then
     LOCAL_BIN="$(pwd)"
+elif [[ -f "./build/c-mi" ]]; then
+    LOCAL_BIN="$(pwd)/build"
 fi
 
 TEMP_DIR=""
