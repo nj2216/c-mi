@@ -1,0 +1,73 @@
+name: Build c-mi
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config qt6-base-dev libgl1-mesa-dev \
+            libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libswresample-dev libavdevice-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Upload native binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: c-mi-native
+          path: build/c-mi
+          if-no-files-found: error
+
+  static:
+    name: Static build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build static image
+        run: docker build --progress=plain -f toolchain/Dockerfile -t c-mi-static .
+
+      - name: Extract static binary
+        run: |
+          container=$(docker create c-mi-static)
+          trap 'docker rm "$container" >/dev/null' EXIT
+          docker cp "$container:/c-mi" ./c-mi
+          chmod +x ./c-mi
+
+      - name: Verify static binary
+        run: |
+          # GL/X11/libc stay dynamic (GL must dlopen the vendor driver at
+          # runtime), so only assert Qt and FFmpeg aren't runtime deps.
+          file ./c-mi | grep -F 'ELF'
+          if ldd ./c-mi 2>&1 | grep -Ei 'qt6|libav|libsw'; then
+            echo "static binary still depends on Qt/FFmpeg shared libraries" >&2
+            exit 1
+          fi
+
+      - name: Upload static binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: c-mi-static
+          path: c-mi
+          if-no-files-found: error

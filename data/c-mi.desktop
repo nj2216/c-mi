@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=c~mi
+GenericName=Camera
+Comment=Native Linux camera app (See Me)
+Exec=c-mi
+Icon=c-mi
+Terminal=false
+Categories=AudioVideo;Video;Photography;
+Keywords=camera;webcam;photo;video;record;
+StartupNotify=true
+StartupWMClass=c-mi

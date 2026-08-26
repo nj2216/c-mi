@@ -1,0 +1,160 @@
+cmake_minimum_required(VERSION 3.16)
+project(c-mi VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(CMI_STATIC "Statically link Qt and FFmpeg (GL/X11/libc stay dynamic)" OFF)
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# --- Qt6 (Widgets + OpenGLWidgets) ---
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Gui Core)
+
+if(CMI_STATIC)
+    foreach(QT_TARGET Qt6::Widgets Qt6::OpenGLWidgets Qt6::Gui Qt6::Core)
+        get_target_property(QT_LOCATION ${QT_TARGET} IMPORTED_LOCATION_RELEASE)
+        if(NOT QT_LOCATION)
+            get_target_property(QT_LOCATION ${QT_TARGET} IMPORTED_LOCATION)
+        endif()
+        if(NOT QT_LOCATION OR NOT QT_LOCATION MATCHES "\\.a$")
+            message(FATAL_ERROR
+                "CMI_STATIC requires a static Qt6 installation; ${QT_TARGET} "
+                "resolved to '${QT_LOCATION}'")
+        endif()
+    endforeach()
+
+    set(PKG_CONFIG_USE_STATIC_LIBS TRUE)
+
+    # Automatically prioritize static FFmpeg pkgconfig paths from /opt/cmi-static or CMAKE_PREFIX_PATH
+    set(_pkgconfig_paths
+        "/opt/cmi-static/lib/pkgconfig"
+        "${CMAKE_PREFIX_PATH}/lib/pkgconfig"
+        "${CMAKE_PREFIX_PATH}/../lib/pkgconfig"
+    )
+    foreach(_p IN LISTS _pkgconfig_paths)
+        if(EXISTS "${_p}")
+            set(ENV{PKG_CONFIG_PATH} "${_p}:$ENV{PKG_CONFIG_PATH}")
+        endif()
+    endforeach()
+
+    # Prefer static archives, but fall back to shared libraries for things
+    # like GL/X11 that never ship a static archive (GL must dlopen the
+    # vendor driver at runtime, so it can't be linked statically anyway).
+    set(CMAKE_FIND_LIBRARY_SUFFIXES .a .so)
+endif()
+
+# --- pkg-config deps: FFmpeg ---
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libswresample libavdevice)
+
+add_executable(c-mi
+    resources.qrc
+    src/main.cpp
+    src/v4l2/DeviceManager.h
+    src/v4l2/DeviceManager.cpp
+    src/v4l2/CaptureDevice.h
+    src/v4l2/CaptureDevice.cpp
+    src/v4l2/ControlPanel.h
+    src/v4l2/ControlPanel.cpp
+    src/encode/PhotoEncoder.h
+    src/encode/PhotoEncoder.cpp
+    src/encode/VideoEncoder.h
+    src/encode/VideoEncoder.cpp
+    src/ui/MainWindow.h
+    src/ui/MainWindow.cpp
+    src/ui/PreviewWidget.h
+    src/ui/PreviewWidget.cpp
+    src/ui/ControlSliders.h
+    src/ui/ControlSliders.cpp
+    src/ui/ToggleSwitch.h
+    src/ui/ToggleSwitch.cpp
+    src/ui/SegmentedControl.h
+    src/ui/SegmentedControl.cpp
+    src/ui/CapturesTray.h
+    src/ui/CapturesTray.cpp
+    src/ui/PreviewModal.h
+    src/ui/PreviewModal.cpp
+    src/ui/AboutModal.h
+    src/ui/AboutModal.cpp
+    src/ui/TrayIcon.h
+    src/ui/TrayIcon.cpp
+    src/ui/SvgIcons.h
+)
+
+target_include_directories(c-mi PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${FFMPEG_STATIC_INCLUDE_DIRS}
+    ${FFMPEG_INCLUDE_DIRS}
+)
+
+target_link_directories(c-mi PRIVATE
+    ${FFMPEG_STATIC_LIBRARY_DIRS}
+    ${FFMPEG_LIBRARY_DIRS}
+)
+
+target_compile_options(c-mi PRIVATE
+    -Wall -Wextra
+    ${FFMPEG_CFLAGS_OTHER}
+)
+
+if(CMI_STATIC AND FFMPEG_STATIC_LIBRARIES)
+    set(FFMPEG_LIBS_TO_LINK ${FFMPEG_STATIC_LIBRARIES})
+else()
+    set(FFMPEG_LIBS_TO_LINK ${FFMPEG_LIBRARIES})
+endif()
+
+target_link_libraries(c-mi PRIVATE
+    Qt6::Widgets
+    Qt6::OpenGLWidgets
+    Qt6::Gui
+    Qt6::Core
+    ${FFMPEG_LIBS_TO_LINK}
+    GL
+    pthread
+)
+
+set_target_properties(c-mi PROPERTIES
+    BUILD_RPATH "$ORIGIN/../lib/c-mi"
+    BUILD_WITH_INSTALL_RPATH TRUE
+    INSTALL_RPATH "$ORIGIN/../lib/c-mi"
+)
+
+if(CMI_STATIC)
+    target_link_options(c-mi PRIVATE
+        -static-libgcc
+        -static-libstdc++
+    )
+    if(COMMAND qt_import_plugins)
+        qt_import_plugins(c-mi
+            INCLUDE
+                Qt6::QXcbIntegrationPlugin
+                Qt6::QXcbGlxIntegrationPlugin
+                Qt6::QXcbEglIntegrationPlugin
+                Qt6::QOffscreenIntegrationPlugin
+                Qt6::QJpegPlugin
+                Qt6::QGifPlugin
+                Qt6::QICOPlugin
+                Qt6::QComposePlatformInputContextPlugin
+                Qt6::QXdgDesktopPortalThemePlugin
+        )
+    else()
+        message(FATAL_ERROR "CMI_STATIC requires Qt's qt_import_plugins command")
+    endif()
+endif()
+
+# --- Install / XDG integration ---
+include(GNUInstallDirs)
+
+install(TARGETS c-mi RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES data/c-mi.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES data/icons/c-mi.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
