@@ -88,9 +88,11 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
-private slots:
     void onDevicesChanged();
     void onDeviceSelected(int index);
+    void onAudioDeviceSelected(int index);
+    void onAudioInputOpened(const QString &deviceName);
+    void onAudioInputFailed(const QString &reason);
     void onFrameReady(const uchar *data, int bytes, QSize size, uint32_t pixFmt);
     void onShutterClicked();
     void onCaptureError(const QString &message);
@@ -98,6 +100,7 @@ private slots:
 
 private:
     void buildUi();
+    void updateAudioDevices();
     void applyStyle();
     void openDevice(const QString &node);
     void closeDevice();
@@ -178,6 +181,8 @@ private:
     QWidget *m_sidebarBackdrop = nullptr;
     QComboBox *m_deviceCombo = nullptr;
     QLabel *m_deviceStatus = nullptr;
+    QComboBox *m_audioCombo = nullptr;
+    QLabel *m_audioStatus = nullptr;
     SegmentedControl *m_arSegment = nullptr;
     SegmentedControl *m_qualitySegment = nullptr;
     SegmentedControl *m_denoiseSegment = nullptr;

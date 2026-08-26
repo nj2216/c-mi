@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QSize>
 #include <QString>
+#include <QList>
 #include <QMutex>
 #include <atomic>
 #include <thread>
@@ -13,12 +14,18 @@ struct AVCodecContext;
 struct AVFrame;
 struct SwsContext;
 struct SwrContext;
+struct AVAudioFifo;
 
 namespace cmi {
 
+struct AudioDeviceInfo {
+    QString id;       // Device ID passed to demuxer (e.g. "default", "hw:0,0")
+    QString name;     // Friendly display name
+    QString backend;  // "pulse" or "alsa"
+};
+
 // Records the active video stream to H264/MP4 via libavformat, muxing audio
-// captured from the default PipeWire/Pulse input (via FFmpeg's pulse demuxer)
-// in a background thread.
+// captured from PulseAudio/PipeWire or ALSA input in a background thread.
 class VideoEncoder : public QObject {
     Q_OBJECT
 public:
@@ -26,6 +33,13 @@ public:
     ~VideoEncoder() override;
 
     bool isRecording() const { return m_recording.load(); }
+    bool hasAudio() const { return m_withAudio; }
+
+    QString audioDevice() const { return m_audioDevice; }
+    void setAudioDevice(const QString &device) { m_audioDevice = device; }
+
+    static QList<AudioDeviceInfo> availableAudioDevices();
+    static bool isAudioInputAvailable();
 
 public slots:
     bool start(const QString &path, QSize size, int fps, bool withAudio);
@@ -37,6 +51,8 @@ signals:
     void errorOccurred(const QString &message);
     void recordingStarted(const QString &path);
     void recordingStopped(const QString &path);
+    void audioInputOpened(const QString &deviceName);
+    void audioInputFailed(const QString &reason);
 
 private:
     bool initVideoStream(QSize size, int fps);
@@ -49,6 +65,7 @@ private:
     QString m_path;
     std::atomic<bool> m_recording{false};
     bool m_withAudio = false;
+    QString m_audioDevice;
 
     QMutex m_mutex;
     AVFormatContext *m_fmt = nullptr;
@@ -58,16 +75,23 @@ private:
     AVFrame *m_audioFrame = nullptr;
     SwsContext *m_sws = nullptr;
     SwrContext *m_swr = nullptr;
+    AVAudioFifo *m_audioFifo = nullptr;
+
     int m_videoStreamIdx = -1;
     int m_audioStreamIdx = -1;
     int64_t m_videoPts = 0;
     int64_t m_audioPts = 0;
     int m_fps = 30;
 
-    // Audio capture from default Pulse/PipeWire-pulse source.
+    // Audio capture from default Pulse/PipeWire-pulse source or ALSA.
     AVFormatContext *m_audioInput = nullptr;
     std::thread *m_audioThread = nullptr;
     std::atomic<bool> m_audioStop{false};
+
+    int m_inSampleRate = 48000;
+    int m_inChannels = 2;
+    int m_inBytesPerSample = 2;
+    int m_inSampleFmt = 0;
 };
 
 } // namespace cmi

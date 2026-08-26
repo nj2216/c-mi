@@ -5,6 +5,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
+#include <libavutil/audio_fifo.h>
 #include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
 #include <libavdevice/avdevice.h>
@@ -12,6 +13,9 @@ extern "C" {
 
 #include <cstring>
 #include <thread>
+#include <algorithm>
+#include <QFile>
+#include <QTextStream>
 
 namespace cmi {
 
@@ -48,6 +52,59 @@ VideoEncoder::VideoEncoder(QObject *parent) : QObject(parent) {}
 VideoEncoder::~VideoEncoder()
 {
     stop();
+}
+
+QList<AudioDeviceInfo> VideoEncoder::availableAudioDevices()
+{
+    avdevice_register_all();
+    QList<AudioDeviceInfo> list;
+
+    // Check pulse backend
+    if (av_find_input_format("pulse")) {
+        list.append({QStringLiteral("default"),
+                     QStringLiteral("Default Microphone (PulseAudio / PipeWire)"),
+                     QStringLiteral("pulse")});
+    }
+
+    // Check alsa backend
+    if (av_find_input_format("alsa")) {
+        list.append({QStringLiteral("default"),
+                     QStringLiteral("Default Microphone (ALSA)"),
+                     QStringLiteral("alsa")});
+
+        // Query ALSA capture devices from procfs if available
+        QFile pcmFile(QStringLiteral("/proc/asound/pcm"));
+        if (pcmFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream ts(&pcmFile);
+            while (!ts.atEnd()) {
+                QString line = ts.readLine();
+                if (line.contains(QStringLiteral("capture"), Qt::CaseInsensitive)) {
+                    // Line format: "00-00: ALC892 Analog : ALC892 Analog : playback 1 : capture 1"
+                    QStringList parts = line.split(QLatin1Char(':'));
+                    if (parts.size() >= 2) {
+                        QString cardDev = parts[0].trimmed();
+                        QString name = parts[1].trimmed();
+                        QStringList cd = cardDev.split(QLatin1Char('-'));
+                        if (cd.size() == 2) {
+                            int card = cd[0].toInt();
+                            int dev = cd[1].toInt();
+                            QString hwId = QStringLiteral("hw:%1,%2").arg(card).arg(dev);
+                            list.append({hwId,
+                                         QStringLiteral("%1 (%2)").arg(name, hwId),
+                                         QStringLiteral("alsa")});
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return list;
+}
+
+bool VideoEncoder::isAudioInputAvailable()
+{
+    return !availableAudioDevices().isEmpty();
 }
 
 bool VideoEncoder::initVideoStream(QSize size, int fps)
@@ -131,6 +188,11 @@ bool VideoEncoder::initAudioStream()
     m_audioStreamIdx = st->index;
 
     m_audioCtx = avcodec_alloc_context3(codec);
+    if (!m_audioCtx) {
+        emit errorOccurred(QStringLiteral("Cannot allocate audio codec context"));
+        return false;
+    }
+
     m_audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
     m_audioCtx->bit_rate = 128000;
     m_audioCtx->sample_rate = 48000;
@@ -147,53 +209,165 @@ bool VideoEncoder::initAudioStream()
     avcodec_parameters_from_context(st->codecpar, m_audioCtx);
     st->time_base = m_audioCtx->time_base;
 
+    const int frameSize = m_audioCtx->frame_size > 0 ? m_audioCtx->frame_size : 1024;
+
     m_audioFrame = av_frame_alloc();
     m_audioFrame->format = m_audioCtx->sample_fmt;
     m_audioFrame->sample_rate = m_audioCtx->sample_rate;
     av_channel_layout_copy(&m_audioFrame->ch_layout, &m_audioCtx->ch_layout);
-    m_audioFrame->nb_samples = m_audioCtx->frame_size;
+    m_audioFrame->nb_samples = frameSize;
     if (av_frame_get_buffer(m_audioFrame, 0) < 0) {
         emit errorOccurred(QStringLiteral("Cannot allocate audio frame"));
         return false;
     }
+
+    m_audioFifo = av_audio_fifo_alloc(m_audioCtx->sample_fmt, m_audioCtx->ch_layout.nb_channels, frameSize * 4);
+    if (!m_audioFifo) {
+        emit errorOccurred(QStringLiteral("Cannot allocate audio FIFO"));
+        return false;
+    }
+
     return true;
 }
+
+namespace {
+static int audioInterruptCallback(void *opaque)
+{
+    auto *stopFlag = static_cast<std::atomic<bool>*>(opaque);
+    return (stopFlag && stopFlag->load()) ? 1 : 0;
+}
+} // namespace
 
 bool VideoEncoder::openAudioInput()
 {
     avdevice_register_all();
-    const AVInputFormat *inFmt = av_find_input_format("pulse");
-    if (!inFmt) {
-        emit errorOccurred(QStringLiteral("FFmpeg pulse input not available"));
+
+    QString deviceToOpen = m_audioDevice.trimmed();
+    if (deviceToOpen.isEmpty())
+        deviceToOpen = QStringLiteral("default");
+
+    QString chosenBackend;
+
+    auto tryOpen = [&](const char *fmtName, const QString &devName) -> bool {
+        const AVInputFormat *inFmt = av_find_input_format(fmtName);
+        if (!inFmt)
+            return false;
+
+        m_audioInput = avformat_alloc_context();
+        if (!m_audioInput)
+            return false;
+
+        m_audioInput->interrupt_callback.callback = audioInterruptCallback;
+        m_audioInput->interrupt_callback.opaque = &m_audioStop;
+
+        AVDictionary *opts = nullptr;
+        int ret = avformat_open_input(&m_audioInput, devName.toUtf8().constData(), inFmt, &opts);
+        av_dict_free(&opts);
+
+        if (ret == 0 && m_audioInput) {
+            chosenBackend = QString::fromUtf8(fmtName);
+            return true;
+        }
+
+        if (m_audioInput) {
+            avformat_close_input(&m_audioInput);
+            m_audioInput = nullptr;
+        }
         return false;
+    };
+
+    if (deviceToOpen.startsWith(QStringLiteral("hw:")) || deviceToOpen.startsWith(QStringLiteral("plughw:"))) {
+        tryOpen("alsa", deviceToOpen);
+    } else if (deviceToOpen == QStringLiteral("default")) {
+        if (!tryOpen("pulse", QStringLiteral("default"))) {
+            tryOpen("alsa", QStringLiteral("default"));
+        }
+    } else {
+        if (!tryOpen("pulse", deviceToOpen)) {
+            tryOpen("alsa", deviceToOpen);
+        }
     }
-    AVDictionary *opts = nullptr;
-    av_dict_set(&opts, "sample_rate", "48000", 0);
-    av_dict_set(&opts, "channels", "2", 0);
-    int r = avformat_open_input(&m_audioInput, "default", inFmt, &opts);
-    av_dict_free(&opts);
-    if (r < 0) {
-        emit errorOccurred(QStringLiteral("Cannot open default audio input (Pulse/PipeWire)"));
-        return false;
-    }
-    if (avformat_find_stream_info(m_audioInput, nullptr) < 0) {
-        emit errorOccurred(QStringLiteral("Cannot read audio input stream info"));
-        avformat_close_input(&m_audioInput);
+
+    if (!m_audioInput) {
+        emit audioInputFailed(QStringLiteral("No audio input device available"));
         return false;
     }
 
-    // Resampler: input (whatever pulse gives) -> FLTP 48k stereo.
-    AVStream *inSt = m_audioInput->streams[0];
-    AVCodecParameters *par = inSt->codecpar;
-    swr_alloc_set_opts2(&m_swr,
-                        &m_audioCtx->ch_layout, AV_SAMPLE_FMT_FLTP, m_audioCtx->sample_rate,
-                        &par->ch_layout, (AVSampleFormat)par->format, par->sample_rate,
-                        0, nullptr);
-    if (!m_swr || swr_init(m_swr) < 0) {
-        emit errorOccurred(QStringLiteral("Audio resampler init failed"));
+    if (avformat_find_stream_info(m_audioInput, nullptr) < 0 || m_audioInput->nb_streams == 0) {
+        emit audioInputFailed(QStringLiteral("Cannot read audio input stream info"));
         avformat_close_input(&m_audioInput);
+        m_audioInput = nullptr;
         return false;
     }
+
+    AVStream *inSt = m_audioInput->streams[0];
+    AVCodecParameters *par = inSt->codecpar;
+
+    // Channels / Channel Layout
+    AVChannelLayout inChLayout;
+    std::memset(&inChLayout, 0, sizeof(inChLayout));
+    if (par->ch_layout.nb_channels > 0) {
+        av_channel_layout_copy(&inChLayout, &par->ch_layout);
+    } else {
+        av_channel_layout_default(&inChLayout, 2);
+    }
+
+    int inSampleRate = par->sample_rate > 0 ? par->sample_rate : 48000;
+
+    AVSampleFormat inSampleFmt = (AVSampleFormat)par->format;
+    if (inSampleFmt == AV_SAMPLE_FMT_NONE) {
+        switch (par->codec_id) {
+        case AV_CODEC_ID_PCM_S16LE:
+        case AV_CODEC_ID_PCM_S16BE:
+            inSampleFmt = AV_SAMPLE_FMT_S16;
+            break;
+        case AV_CODEC_ID_PCM_S32LE:
+        case AV_CODEC_ID_PCM_S32BE:
+            inSampleFmt = AV_SAMPLE_FMT_S32;
+            break;
+        case AV_CODEC_ID_PCM_F32LE:
+        case AV_CODEC_ID_PCM_F32BE:
+            inSampleFmt = AV_SAMPLE_FMT_FLT;
+            break;
+        case AV_CODEC_ID_PCM_U8:
+            inSampleFmt = AV_SAMPLE_FMT_U8;
+            break;
+        default:
+            inSampleFmt = AV_SAMPLE_FMT_S16;
+            break;
+        }
+    }
+
+    m_inSampleRate = inSampleRate;
+    m_inChannels = inChLayout.nb_channels > 0 ? inChLayout.nb_channels : 2;
+    m_inSampleFmt = inSampleFmt;
+    m_inBytesPerSample = av_get_bytes_per_sample(inSampleFmt);
+    if (m_inBytesPerSample <= 0)
+        m_inBytesPerSample = 2;
+
+    // Resampler: input -> FLTP 48k stereo
+    AVChannelLayout outChLayout;
+    av_channel_layout_default(&outChLayout, 2);
+
+    int swrRet = swr_alloc_set_opts2(&m_swr,
+                                     &outChLayout, AV_SAMPLE_FMT_FLTP, 48000,
+                                     &inChLayout, inSampleFmt, inSampleRate,
+                                     0, nullptr);
+    av_channel_layout_uninit(&inChLayout);
+    av_channel_layout_uninit(&outChLayout);
+
+    if (swrRet < 0 || !m_swr || swr_init(m_swr) < 0) {
+        emit audioInputFailed(QStringLiteral("Audio resampler init failed"));
+        if (m_swr) {
+            swr_free(&m_swr);
+            m_swr = nullptr;
+        }
+        avformat_close_input(&m_audioInput);
+        m_audioInput = nullptr;
+        return false;
+    }
+
+    emit audioInputOpened(QStringLiteral("%1 [%2]").arg(deviceToOpen, chosenBackend));
     return true;
 }
 
@@ -229,11 +403,16 @@ bool VideoEncoder::start(const QString &path, QSize size, int fps, bool withAudi
 
     bool audioOk = false;
     if (withAudio) {
-        // Audio is best-effort: continue video-only if capture init fails.
-        audioOk = initAudioStream();
-        if (audioOk && !openAudioInput())
-            audioOk = false;
+        m_audioStop.store(false);
+        if (openAudioInput()) {
+            if (initAudioStream()) {
+                audioOk = true;
+            } else {
+                closeAudioInput();
+            }
+        }
     }
+    m_withAudio = audioOk;
 
     if (!(m_fmt->oformat->flags & AVFMT_NOFILE)) {
         if (avio_open(&m_fmt->pb, path.toUtf8().constData(), AVIO_FLAG_WRITE) < 0) {
@@ -249,7 +428,6 @@ bool VideoEncoder::start(const QString &path, QSize size, int fps, bool withAudi
         return false;
     }
 
-    m_audioStop.store(false);
     if (audioOk) {
         m_audioThread = new std::thread(&VideoEncoder::audioThreadMain, this);
     }
@@ -297,57 +475,76 @@ void VideoEncoder::writeFrame(const uchar *pixels, int bytes, QSize size)
 void VideoEncoder::audioThreadMain()
 {
     AVPacket *pkt = av_packet_alloc();
-    AVFrame *inFrame = av_frame_alloc();
+    if (!pkt) return;
+
+    const int frameSize = m_audioCtx ? (m_audioCtx->frame_size > 0 ? m_audioCtx->frame_size : 1024) : 1024;
+    const int bytesPerSample = m_inBytesPerSample > 0 ? m_inBytesPerSample : 2;
+    const int inChannels = m_inChannels > 0 ? m_inChannels : 2;
+    const int inRate = m_inSampleRate > 0 ? m_inSampleRate : 48000;
 
     while (!m_audioStop.load()) {
         if (av_read_frame(m_audioInput, pkt) < 0)
             break;
 
-        // Decode not needed: pulse input delivers raw PCM.
-        // Copy raw samples into a resampled frame.
-        AVStream *inSt = m_audioInput->streams[pkt->stream_index];
-        AVCodecParameters *par = inSt->codecpar;
-        int inSamples = pkt->size / (par->ch_layout.nb_channels *
-                                     av_get_bytes_per_sample((AVSampleFormat)par->format));
-        if (inSamples <= 0) {
-            av_packet_unref(pkt);
-            continue;
-        }
-
-        QMutexLocker locker(&m_mutex);
         if (m_audioStop.load()) {
             av_packet_unref(pkt);
             break;
         }
 
-        if (av_frame_make_writable(m_audioFrame) == 0) {
-            const uint8_t *inData[1] = {pkt->data};
-            int outSamples = swr_convert(m_swr,
-                                         m_audioFrame->data, m_audioFrame->nb_samples,
-                                         inData, inSamples);
-            if (outSamples > 0) {
-                m_audioFrame->nb_samples = outSamples;
-                m_audioFrame->pts = m_audioPts;
-                m_audioPts += outSamples;
+        int inSamples = pkt->size / (inChannels * bytesPerSample);
 
-                if (avcodec_send_frame(m_audioCtx, m_audioFrame) == 0) {
-                    AVPacket *outPkt = av_packet_alloc();
-                    while (avcodec_receive_packet(m_audioCtx, outPkt) == 0) {
-                        av_packet_rescale_ts(outPkt, m_audioCtx->time_base,
-                                             m_fmt->streams[m_audioStreamIdx]->time_base);
-                        outPkt->stream_index = m_audioStreamIdx;
-                        av_interleaved_write_frame(m_fmt, outPkt);
-                        av_packet_unref(outPkt);
+        if (inSamples > 0 && m_swr) {
+            int64_t delay = swr_get_delay(m_swr, inRate);
+            int maxOutSamples = av_rescale_rnd(delay + inSamples, 48000, inRate, AV_ROUND_UP);
+            if (maxOutSamples > 0) {
+                uint8_t **outData = nullptr;
+                int outLinesize = 0;
+                if (av_samples_alloc_array_and_samples(&outData, &outLinesize, 2, maxOutSamples,
+                                                       AV_SAMPLE_FMT_FLTP, 0) >= 0) {
+                    const uint8_t *inData[1] = {pkt->data};
+                    int converted = swr_convert(m_swr, outData, maxOutSamples, inData, inSamples);
+                    if (converted > 0) {
+                        QMutexLocker locker(&m_mutex);
+                        if (!m_audioStop.load() && m_audioFifo && m_audioCtx && m_audioFrame) {
+                            if (av_audio_fifo_space(m_audioFifo) < converted) {
+                                int ret = av_audio_fifo_realloc(m_audioFifo, av_audio_fifo_size(m_audioFifo) + converted + frameSize * 2);
+                                (void)ret;
+                            }
+                            av_audio_fifo_write(m_audioFifo, reinterpret_cast<void**>(outData), converted);
+
+                            while (av_audio_fifo_size(m_audioFifo) >= frameSize) {
+                                if (av_frame_make_writable(m_audioFrame) == 0) {
+                                    m_audioFrame->nb_samples = frameSize;
+                                    av_audio_fifo_read(m_audioFifo, reinterpret_cast<void**>(m_audioFrame->data), frameSize);
+                                    m_audioFrame->pts = m_audioPts;
+                                    m_audioPts += frameSize;
+
+                                    if (avcodec_send_frame(m_audioCtx, m_audioFrame) == 0) {
+                                        AVPacket *outPkt = av_packet_alloc();
+                                        while (avcodec_receive_packet(m_audioCtx, outPkt) == 0) {
+                                            av_packet_rescale_ts(outPkt, m_audioCtx->time_base,
+                                                                 m_fmt->streams[m_audioStreamIdx]->time_base);
+                                            outPkt->stream_index = m_audioStreamIdx;
+                                            av_interleaved_write_frame(m_fmt, outPkt);
+                                            av_packet_unref(outPkt);
+                                        }
+                                        av_packet_free(&outPkt);
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
                     }
-                    av_packet_free(&outPkt);
+                    if (outData) {
+                        av_freep(&outData[0]);
+                        av_freep(&outData);
+                    }
                 }
             }
         }
-        locker.unlock();
         av_packet_unref(pkt);
     }
-
-    av_frame_free(&inFrame);
     av_packet_free(&pkt);
 }
 
@@ -366,8 +563,8 @@ void VideoEncoder::stop()
 
     QMutexLocker locker(&m_mutex);
     if (m_fmt) {
-        // Flush encoders.
-        if (m_videoCtx) {
+        // Flush video encoder
+        if (m_videoCtx && m_videoStreamIdx >= 0) {
             avcodec_send_frame(m_videoCtx, nullptr);
             AVPacket *pkt = av_packet_alloc();
             while (avcodec_receive_packet(m_videoCtx, pkt) == 0) {
@@ -379,7 +576,69 @@ void VideoEncoder::stop()
             }
             av_packet_free(&pkt);
         }
-        if (m_audioCtx && m_withAudio) {
+
+        // Flush audio encoder
+        if (m_audioCtx && m_withAudio && m_audioStreamIdx >= 0) {
+            const int frameSize = m_audioCtx->frame_size > 0 ? m_audioCtx->frame_size : 1024;
+            const int inRate = m_inSampleRate > 0 ? m_inSampleRate : 48000;
+
+            // Drain remaining samples from resampler into FIFO
+            if (m_swr && m_audioFifo) {
+                int64_t delay = swr_get_delay(m_swr, inRate);
+                int drainSamples = av_rescale_rnd(delay, 48000, inRate, AV_ROUND_UP);
+                if (drainSamples > 0) {
+                    uint8_t **outData = nullptr;
+                    int outLinesize = 0;
+                    if (av_samples_alloc_array_and_samples(&outData, &outLinesize, 2, drainSamples, AV_SAMPLE_FMT_FLTP, 0) >= 0) {
+                        int converted = swr_convert(m_swr, outData, drainSamples, nullptr, 0);
+                        if (converted > 0) {
+                            if (av_audio_fifo_space(m_audioFifo) < converted) {
+                                int ret = av_audio_fifo_realloc(m_audioFifo, av_audio_fifo_size(m_audioFifo) + converted + frameSize * 2);
+                                (void)ret;
+                            }
+                            av_audio_fifo_write(m_audioFifo, reinterpret_cast<void**>(outData), converted);
+                        }
+                        av_freep(&outData[0]);
+                        av_freep(&outData);
+                    }
+                }
+            }
+
+            // Drain all remaining samples in FIFO to encoder, padding last partial frame with silence
+            if (m_audioFifo && m_audioFrame) {
+                while (av_audio_fifo_size(m_audioFifo) > 0) {
+                    int samplesInFifo = av_audio_fifo_size(m_audioFifo);
+                    int samplesToRead = std::min(samplesInFifo, frameSize);
+                    if (av_frame_make_writable(m_audioFrame) == 0) {
+                        m_audioFrame->nb_samples = frameSize;
+                        av_audio_fifo_read(m_audioFifo, reinterpret_cast<void**>(m_audioFrame->data), samplesToRead);
+                        if (samplesToRead < frameSize) {
+                            for (int ch = 0; ch < 2; ++ch) {
+                                float *buf = reinterpret_cast<float*>(m_audioFrame->data[ch]);
+                                std::memset(buf + samplesToRead, 0, (frameSize - samplesToRead) * sizeof(float));
+                            }
+                        }
+                        m_audioFrame->pts = m_audioPts;
+                        m_audioPts += samplesToRead;
+
+                        if (avcodec_send_frame(m_audioCtx, m_audioFrame) == 0) {
+                            AVPacket *outPkt = av_packet_alloc();
+                            while (avcodec_receive_packet(m_audioCtx, outPkt) == 0) {
+                                av_packet_rescale_ts(outPkt, m_audioCtx->time_base,
+                                                     m_fmt->streams[m_audioStreamIdx]->time_base);
+                                outPkt->stream_index = m_audioStreamIdx;
+                                av_interleaved_write_frame(m_fmt, outPkt);
+                                av_packet_unref(outPkt);
+                            }
+                            av_packet_free(&outPkt);
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            // Flush encoder with NULL frame
             avcodec_send_frame(m_audioCtx, nullptr);
             AVPacket *pkt = av_packet_alloc();
             while (avcodec_receive_packet(m_audioCtx, pkt) == 0) {
@@ -391,6 +650,7 @@ void VideoEncoder::stop()
             }
             av_packet_free(&pkt);
         }
+
         av_write_trailer(m_fmt);
     }
 
@@ -405,6 +665,10 @@ void VideoEncoder::stop()
 void VideoEncoder::cleanup()
 {
     closeAudioInput();
+    if (m_audioFifo) {
+        av_audio_fifo_free(m_audioFifo);
+        m_audioFifo = nullptr;
+    }
     if (m_swr) {
         swr_free(&m_swr);
         m_swr = nullptr;

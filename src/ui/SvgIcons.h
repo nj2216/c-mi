@@ -298,6 +298,62 @@ inline QIcon chevronRightIcon(const QColor &color = Qt::white, int size = 24)
     return QIcon(pm);
 }
 
+inline QIcon micIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    p.setPen(QPen(color, size * 0.08, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(color);
+
+    const qreal cx = size / 2.0;
+    // Mic capsule
+    QRectF capsule(cx - size * 0.14, size * 0.16, size * 0.28, size * 0.44);
+    p.drawRoundedRect(capsule, size * 0.14, size * 0.14);
+
+    // Cradle arc around capsule
+    p.setBrush(Qt::NoBrush);
+    QRectF cradle(cx - size * 0.25, size * 0.25, size * 0.50, size * 0.42);
+    p.drawArc(cradle, 0, -180 * 16);
+
+    // Stand & base
+    p.drawLine(QPointF(cx, size * 0.67), QPointF(cx, size * 0.82));
+    p.drawLine(QPointF(cx - size * 0.20, size * 0.82), QPointF(cx + size * 0.20, size * 0.82));
+
+    p.end();
+    return QIcon(pm);
+}
+
+inline QIcon micOffIcon(const QColor &color = Qt::white, int size = 24)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    p.setPen(QPen(color, size * 0.08, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+
+    const qreal cx = size / 2.0;
+    QRectF capsule(cx - size * 0.14, size * 0.16, size * 0.28, size * 0.44);
+    p.drawRoundedRect(capsule, size * 0.14, size * 0.14);
+
+    QRectF cradle(cx - size * 0.25, size * 0.25, size * 0.50, size * 0.42);
+    p.drawArc(cradle, 0, -180 * 16);
+
+    p.drawLine(QPointF(cx, size * 0.67), QPointF(cx, size * 0.82));
+    p.drawLine(QPointF(cx - size * 0.20, size * 0.82), QPointF(cx + size * 0.20, size * 0.82));
+
+    // Slash
+    p.setPen(QPen(QColor(255, 69, 58), size * 0.09, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(size * 0.20, size * 0.20), QPointF(size * 0.80, size * 0.80));
+
+    p.end();
+    return QIcon(pm);
+}
+
 } // namespace icons
 } // namespace cmi
 

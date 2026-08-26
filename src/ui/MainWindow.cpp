@@ -157,9 +157,16 @@ MainWindow::MainWindow(QWidget *parent)
         qint64 secs = m_recordElapsed.elapsed() / 1000;
         int m = static_cast<int>(secs / 60);
         int s = static_cast<int>(secs % 60);
-        m_hudStatus->setText(QStringLiteral("REC %1:%2")
+        QString micSuffix;
+        if (!m_micEnabled) {
+            micSuffix = QStringLiteral(" • Muted");
+        } else if (!m_encoder->hasAudio()) {
+            micSuffix = QStringLiteral(" • No Mic");
+        }
+        m_hudStatus->setText(QStringLiteral("REC %1:%2%3")
             .arg(m, 2, 10, QLatin1Char('0'))
-            .arg(s, 2, 10, QLatin1Char('0')));
+            .arg(s, 2, 10, QLatin1Char('0'))
+            .arg(micSuffix));
     });
 
     connect(m_tray, &TrayIcon::showWindowRequested, this, [this] {
@@ -182,6 +189,10 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onCaptureError, Qt::QueuedConnection);
     connect(m_encoder, &VideoEncoder::errorOccurred,
             this, &MainWindow::onCaptureError);
+    connect(m_encoder, &VideoEncoder::audioInputOpened,
+            this, &MainWindow::onAudioInputOpened);
+    connect(m_encoder, &VideoEncoder::audioInputFailed,
+            this, &MainWindow::onAudioInputFailed);
     connect(m_encoder, &VideoEncoder::recordingStopped,
             this, [this](const QString &path) {
         m_hudStatus->setText(QStringLiteral("Video Saved"));
@@ -892,6 +903,23 @@ void MainWindow::buildUi()
     camSecLayout->addWidget(m_deviceStatus);
     contentLay->addWidget(camSection);
 
+    // Audio Input (Microphone) Section
+    auto *audioSection = new QWidget(sidebarContent);
+    auto *audioSecLayout = new QVBoxLayout(audioSection);
+    audioSecLayout->setContentsMargins(0, 0, 0, 0);
+    audioSecLayout->setSpacing(6);
+    auto *audioLbl = new QLabel(QStringLiteral("AUDIO INPUT (MICROPHONE)"), audioSection);
+    audioLbl->setObjectName(QStringLiteral("fieldLabel"));
+    audioSecLayout->addWidget(audioLbl);
+    m_audioCombo = new QComboBox(audioSection);
+    connect(m_audioCombo, &QComboBox::currentIndexChanged, this, &MainWindow::onAudioDeviceSelected);
+    audioSecLayout->addWidget(m_audioCombo);
+
+    m_audioStatus = new QLabel(QStringLiteral("[ Auto / Default ]"), audioSection);
+    m_audioStatus->setObjectName(QStringLiteral("deviceStatusPill"));
+    audioSecLayout->addWidget(m_audioStatus);
+    contentLay->addWidget(audioSection);
+
     // V4L2 Hardware Sliders
     auto *hwSection = new QWidget(sidebarContent);
     auto *hwLayout = new QVBoxLayout(hwSection);
@@ -946,6 +974,8 @@ void MainWindow::buildUi()
 
     // 6. About Modal Dialog
     m_aboutModal = new AboutModal(m_centralRoot);
+
+    updateAudioDevices();
 
     setCentralWidget(m_centralRoot);
     resize(1120, 760);
@@ -1418,6 +1448,7 @@ void MainWindow::toggleSidebar(bool show)
     m_sidebarBackdrop->setGeometry(area);
 
     if (show) {
+        updateAudioDevices();
         hideQuickPanel();
         m_sidebarBackdrop->show();
         m_sidebarBackdrop->raise();
@@ -1536,6 +1567,67 @@ void MainWindow::onDeviceSelected(int index)
     if (node.isEmpty() || (m_capture->isOpen() && m_capture->node() == node))
         return;
     openDevice(node);
+}
+
+void MainWindow::updateAudioDevices()
+{
+    if (!m_audioCombo) return;
+
+    const QString prevId = m_audioCombo->currentData().toString();
+
+    m_audioCombo->blockSignals(true);
+    m_audioCombo->clear();
+
+    const auto devices = VideoEncoder::availableAudioDevices();
+    if (devices.isEmpty()) {
+        m_audioCombo->addItem(QStringLiteral("No audio input detected"), QString());
+        if (m_audioStatus) {
+            m_audioStatus->setText(QStringLiteral("[ No Audio Device ]"));
+            m_audioStatus->setStyleSheet(QStringLiteral("color: #ff3b30; font-size: 11px; font-weight: 600;"));
+        }
+    } else {
+        int selectIdx = 0;
+        for (int i = 0; i < devices.size(); ++i) {
+            const auto &dev = devices[i];
+            m_audioCombo->addItem(dev.name, dev.id);
+            if (!prevId.isEmpty() && dev.id == prevId) {
+                selectIdx = i;
+            }
+        }
+        m_audioCombo->setCurrentIndex(selectIdx);
+        if (m_audioStatus) {
+            m_audioStatus->setText(QStringLiteral("[ Available • Ready ]"));
+            m_audioStatus->setStyleSheet(QStringLiteral("color: #30d158; font-size: 11px; font-weight: 600;"));
+        }
+    }
+    m_audioCombo->blockSignals(false);
+
+    if (m_audioCombo->count() > 0) {
+        onAudioDeviceSelected(m_audioCombo->currentIndex());
+    }
+}
+
+void MainWindow::onAudioDeviceSelected(int index)
+{
+    if (index < 0 || !m_audioCombo) return;
+    const QString id = m_audioCombo->itemData(index).toString();
+    m_encoder->setAudioDevice(id);
+}
+
+void MainWindow::onAudioInputOpened(const QString &deviceName)
+{
+    if (m_audioStatus) {
+        m_audioStatus->setText(QStringLiteral("[ Active: %1 ]").arg(deviceName));
+        m_audioStatus->setStyleSheet(QStringLiteral("color: #30d158; font-size: 11px; font-weight: 600;"));
+    }
+}
+
+void MainWindow::onAudioInputFailed(const QString &reason)
+{
+    if (m_audioStatus) {
+        m_audioStatus->setText(QStringLiteral("[ Mic Off: %1 ]").arg(reason));
+        m_audioStatus->setStyleSheet(QStringLiteral("color: #ff9f0a; font-size: 11px; font-weight: 600;"));
+    }
 }
 
 void MainWindow::openDevice(const QString &node)
@@ -1717,7 +1809,13 @@ void MainWindow::startRecording()
         m_recDot->show();
         m_recordElapsed.restart();
         m_recordTimer->start();
-        m_hudStatus->setText(QStringLiteral("REC 00:00"));
+        QString micSuffix;
+        if (!m_micEnabled) {
+            micSuffix = QStringLiteral(" • Muted");
+        } else if (!m_encoder->hasAudio()) {
+            micSuffix = QStringLiteral(" • No Mic");
+        }
+        m_hudStatus->setText(QStringLiteral("REC 00:00%1").arg(micSuffix));
     }
     updateTrayState();
 }
