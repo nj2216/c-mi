@@ -66,7 +66,7 @@ AboutModal::AboutModal(QWidget *parent)
     tagline->setStyleSheet(QStringLiteral("color: #0071e3; font-size: 12px; font-weight: 600;"));
     boxLayout->addWidget(tagline, 0, Qt::AlignCenter);
 
-    auto *versionPill = new QLabel(QStringLiteral("Version 0.3.1"), m_dialogBox);
+    auto *versionPill = new QLabel(QStringLiteral("Version 0.3.2"), m_dialogBox);
     versionPill->setAlignment(Qt::AlignCenter);
     versionPill->setStyleSheet(QStringLiteral(
         "color: rgba(255, 255, 255, 0.7);"
