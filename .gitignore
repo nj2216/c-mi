@@ -4,3 +4,4 @@ dist/
 *.o
 *.user
 compile_commands.json
+*.ipynb
