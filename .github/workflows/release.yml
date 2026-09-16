@@ -65,6 +65,16 @@ jobs:
             exit 1
           fi
 
+      - name: Install runtime libs for dependency bundling
+        run: |
+          # package.sh resolves bundled .so paths via `ldd` on this host, so
+          # any Qt plugin runtime dep missing here silently isn't bundled
+          # and breaks on machines that lack it (e.g. libxcb-cursor).
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-render-util0 libxkbcommon-x11-0
+
       - name: Package release tarball
         run: |
           VERSION="${{ steps.version.outputs.version }}" \

@@ -41,10 +41,18 @@ fi
 # X11) are excluded since bundling GL in particular would fight the host's
 # driver.
 BASELINE_LIBS='^(linux-vdso\.so|ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libresolv\.so|libutil\.so|libanl\.so|libGL\.so|libGLX\.so|libGLdispatch\.so|libEGL\.so|libnss_|libselinux\.so)'
-ldd "$BINARY" 2>/dev/null | awk '$2 == "=>" && $3 != "" {print $1, $3}' |
+ldd "$BINARY" 2>/dev/null | awk '$2 == "=>" {print $1, $3}' |
 while read -r lib_name lib_path; do
-    if [[ -f "$lib_path" ]] && ! [[ "$lib_name" =~ $BASELINE_LIBS ]]; then
+    if [[ "$lib_name" =~ $BASELINE_LIBS ]]; then
+        continue
+    fi
+    if [[ -f "$lib_path" ]]; then
         install -Dm755 "$lib_path" "$STAGE_DIR/lib/c-mi/$lib_name"
+    else
+        # Not resolvable on this packaging host -> it won't be bundled and
+        # will break on target machines that lack it too. Install the
+        # runtime package on the packaging host to fix this.
+        echo "warning: $lib_name has no resolvable path on this host; it will NOT be bundled" >&2
     fi
 done
 
