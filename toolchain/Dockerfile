@@ -25,7 +25,7 @@ RUN curl -fsSLO https://download.qt.io/official_releases/qt/6.8/${QT_VERSION}/su
     && cd qtbase-everywhere-src-${QT_VERSION} \
     && ./configure -static -release -opensource -confirm-license \
         -prefix /opt/cmi-static/qt -nomake tests -nomake examples \
-        -qt-zlib -qt-pcre -qt-freetype -qt-harfbuzz -qt-libpng -qt-libjpeg \
+        -qt-zlib -qt-pcre -system-freetype -qt-harfbuzz -qt-libpng -qt-libjpeg \
         -fontconfig -no-openssl -no-icu -xcb -xcb-xlib -opengl desktop \
     && cmake --build . --parallel \
     && cmake --install .
