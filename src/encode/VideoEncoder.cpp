@@ -40,23 +40,18 @@ void ensurePulseAudio()
 namespace cmi {
 
 namespace {
-// Not every FFmpeg build ships libx264/libopenh264; try known H264 encoders
-// by name first, then fall back to a codec that's always built in so
-// recording still works (at reduced compression efficiency).
+// Hardware H264 encoders require device-specific setup, so prefer software
+// encoders and fall back to MPEG-4 when H264 is unavailable.
 const AVCodec *findVideoEncoder(AVCodecID *outId)
 {
     static const char *kH264Names[] = {
-        "libx264", "libopenh264", "h264_v4l2m2m", "h264_vaapi", "h264_nvenc",
+        "libx264", "libopenh264",
     };
     for (const char *name : kH264Names) {
         if (const AVCodec *c = avcodec_find_encoder_by_name(name)) {
             *outId = AV_CODEC_ID_H264;
             return c;
         }
-    }
-    if (const AVCodec *c = avcodec_find_encoder(AV_CODEC_ID_H264)) {
-        *outId = AV_CODEC_ID_H264;
-        return c;
     }
     if (const AVCodec *c = avcodec_find_encoder(AV_CODEC_ID_MPEG4)) {
         *outId = AV_CODEC_ID_MPEG4;
@@ -151,31 +146,23 @@ QList<AudioDeviceInfo> VideoEncoder::availableAudioDevices()
     probeBackend("dshow", QStringLiteral("DirectShow"));
 
     // Fallbacks if dynamic listing was empty or partial
-    if (const AVInputFormat *pulse = av_find_input_format("pulse")) {
+    if (av_find_input_format("pulse")) {
         QString uniqueKey = QStringLiteral("pulse:default");
         if (!seenIds.contains(uniqueKey)) {
-            AVFormatContext *ctx = nullptr;
-            if (avformat_open_input(&ctx, "default", pulse, nullptr) == 0) {
-                if (ctx) avformat_close_input(&ctx);
-                seenIds.insert(uniqueKey);
-                list.prepend({QStringLiteral("default"),
-                              QStringLiteral("Default Microphone [PulseAudio / PipeWire]"),
-                              QStringLiteral("pulse")});
-            }
+            seenIds.insert(uniqueKey);
+            list.prepend({QStringLiteral("default"),
+                          QStringLiteral("Default Microphone [PulseAudio / PipeWire]"),
+                          QStringLiteral("pulse")});
         }
     }
 
-    if (const AVInputFormat *alsa = av_find_input_format("alsa")) {
+    if (av_find_input_format("alsa")) {
         QString uniqueKey = QStringLiteral("alsa:default");
         if (!seenIds.contains(uniqueKey)) {
-            AVFormatContext *ctx = nullptr;
-            if (avformat_open_input(&ctx, "default", alsa, nullptr) == 0) {
-                if (ctx) avformat_close_input(&ctx);
-                seenIds.insert(uniqueKey);
-                list.append({QStringLiteral("default"),
-                             QStringLiteral("Default Microphone [ALSA]"),
-                             QStringLiteral("alsa")});
-            }
+            seenIds.insert(uniqueKey);
+            list.append({QStringLiteral("default"),
+                         QStringLiteral("Default Microphone [ALSA]"),
+                         QStringLiteral("alsa")});
         }
 
         // Query ALSA capture devices from procfs if available

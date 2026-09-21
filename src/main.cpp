@@ -2,6 +2,7 @@
 #include <QCoreApplication>
 #include <QFont>
 #include <QFontDatabase>
+#include <QDir>
 #include <QFileInfo>
 #include <QSettings>
 #include <QSplashScreen>
@@ -20,6 +21,11 @@ int main(int argc, char *argv[])
     // webcams, deprecated pixel-format notices) on every frame; these are
     // benign noise for a live preview, so only surface real errors.
     av_log_set_level(AV_LOG_ERROR);
+
+    const QString executableDir = QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath();
+    const QString bundledFontDir = QDir::cleanPath(executableDir + QStringLiteral("/../lib/c-mi"));
+    if (QFileInfo::exists(bundledFontDir))
+        qputenv("QT_QPA_FONTDIR", bundledFontDir.toLocal8Bit());
 
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("c-mi"));

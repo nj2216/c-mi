@@ -38,7 +38,7 @@ tar -xf "qtbase-everywhere-src-${QT_VERSION}.tar.xz"
     ./configure -static -release -opensource -confirm-license \
         -prefix "$STATIC_PREFIX/qt" -nomake tests -nomake examples \
         -qt-zlib -qt-pcre -qt-freetype -qt-harfbuzz -qt-libpng -qt-libjpeg \
-        -no-openssl -no-icu -xcb -xcb-xlib -opengl desktop
+        -fontconfig -no-openssl -no-icu -xcb -xcb-xlib -opengl desktop
     cmake --build . --parallel "$JOBS"
     cmake --install .
 )
